@@ -19,8 +19,8 @@ exports.default = async function afterPack(context) {
     execFileSync(rcedit, [
       winPath(exe),
       '--set-icon', winPath(icon),
-      '--set-version-string', 'FileDescription', 'Vault Assistant',
-      '--set-version-string', 'ProductName', 'Vault Assistant',
+      '--set-version-string', 'FileDescription', 'Rook',
+      '--set-version-string', 'ProductName', 'Rook',
       '--set-file-version', version,
       '--set-product-version', version
     ], { stdio: 'inherit' });

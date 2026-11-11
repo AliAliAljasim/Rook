@@ -18,7 +18,7 @@ check:       ## syntax-check all source files
 test:        ## run unit tests (vault write guard)
 	npm test
 
-dist:        ## build the Windows installer from WSL -> dist/vault-assistant-setup-<ver>.exe
+dist:        ## build the Windows installer from WSL -> dist/rook-setup-<ver>.exe
 	WINEDEBUG=-all npm run dist:win
 
 release:     ## build + publish a GitHub release (bump version, push main first)

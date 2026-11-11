@@ -19,5 +19,5 @@ fi
 rm -rf dist
 WINEDEBUG=-all npx electron-builder --win --x64 --publish never
 gh release create "v$version" \
-  "dist/vault-assistant-setup-$version.exe" "dist/vault-assistant-setup-$version.exe.blockmap" dist/latest.yml \
-  --target main --title "Vault Assistant $version" --notes "${NOTES:-Vault Assistant $version}"
+  "dist/rook-setup-$version.exe" "dist/rook-setup-$version.exe.blockmap" dist/latest.yml \
+  --target main --title "Rook $version" --notes "${NOTES:-Rook $version}"

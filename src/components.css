@@ -1,4 +1,4 @@
-/* Vault Assistant — components. Loads after tokens.css. Every value is a token. */
+/* Rook — components. Loads after tokens.css. Every value is a token. */
 
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; }

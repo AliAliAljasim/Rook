@@ -53,7 +53,7 @@ const createdByApp = new Set(); // rel paths of notes this app created (so Undo 
 let win, child, savedBounds = null;
 function createWindow() {
   win = new BrowserWindow({
-    width: 980, height: 760, minWidth: 820, minHeight: 600, frame: false, title: 'Vault Assistant',
+    width: 980, height: 760, minWidth: 820, minHeight: 600, frame: false, title: 'Rook',
     backgroundColor: '#f3f2f2', icon: path.join(__dirname, '..', 'build', 'icon.ico'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
@@ -208,7 +208,16 @@ ipcMain.on('chat:send', (e, { prompt, sessionId }) => {
   child.on('close', (code) => emit({ type: 'done', code, stderr: code ? err.trim() : '' }));
 });
 
+// One-time carry-over of settings and saved chats from the app's old name ("Vault Assistant").
+function migrateOldData() {
+  const old = path.join(app.getPath('appData'), 'Vault Assistant');
+  for (const f of ['config.json', 'chats.json']) {
+    try { if (!fs.existsSync(userFile(f)) && fs.existsSync(path.join(old, f))) fs.copyFileSync(path.join(old, f), userFile(f)); } catch { /* best effort */ }
+  }
+}
+
 app.whenReady().then(() => {
+  migrateOldData();
   createWindow();
   if (app.isPackaged) {
     try { require('electron-updater').autoUpdater.checkForUpdatesAndNotify(); } catch { /* offline or no release yet */ }

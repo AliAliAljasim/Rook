@@ -1,6 +1,6 @@
 {
-  "name": "vault-assistant",
-  "productName": "Vault Assistant",
+  "name": "rook",
+  "productName": "Rook",
   "version": "0.1.0",
   "description": "Note-taking agent: Claude Code (WSL) with write access only to the Obsidian vault",
   "main": "src/main.js",
@@ -16,8 +16,8 @@
     "rcedit": "^5.0.2"
   },
   "build": {
-    "appId": "com.alialialjasim.vaultassistant",
-    "productName": "Vault Assistant",
+    "appId": "com.alialialjasim.rook",
+    "productName": "Rook",
     "files": [
       "src/**/*",
       "package.json",
@@ -30,7 +30,7 @@
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico",
-      "executableName": "vault-assistant",
+      "executableName": "rook",
       "signAndEditExecutable": false
     },
     "afterPack": "scripts/after-pack.js",
@@ -40,17 +40,17 @@
       "runAfterFinish": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Vault Assistant",
-      "uninstallDisplayName": "Vault Assistant",
+      "shortcutName": "Rook",
+      "uninstallDisplayName": "Rook",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
-      "artifactName": "vault-assistant-setup-${version}.${ext}"
+      "artifactName": "rook-setup-${version}.${ext}"
     },
     "publish": [
       {
         "provider": "github",
         "owner": "AliAliAljasim",
-        "repo": "note-taking-assistant",
+        "repo": "rook",
         "releaseType": "release"
       }
     ]

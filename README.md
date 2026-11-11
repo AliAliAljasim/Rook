@@ -1,4 +1,5 @@
-# Vault Assistant
+# Rook
+A note-taking assistant for an Obsidian vault.
 Electron chat app (Windows) -> `wsl.exe` -> Claude Code CLI. Writes allowed only in the Obsidian vault; everything else read-only.
 
 - Design: Wren's "Classical" system. Tokens/components in `src/tokens.css`, `src/components.css`, `src/app.css`; fonts are bundled in `src/fonts/` (works offline).
@@ -9,5 +10,5 @@ Electron chat app (Windows) -> `wsl.exe` -> Claude Code CLI. Writes allowed only
 ## Make targets
 `make install` · `make check` · `make test` · `make dist` (builds the Windows installer from WSL; needs wine32) · `make release` · `make login`
 
-`make dist` writes `dist/vault-assistant-setup-<version>.exe`.
+`make dist` writes `dist/rook-setup-<version>.exe`.
 `node scripts/shot.js <dir>` (run with `npx electron --no-sandbox`) renders the UI with sample data and saves screenshots.

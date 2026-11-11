@@ -1,5 +1,5 @@
 'use strict';
-/* Vault Assistant renderer: plain JS, no framework. Builds DOM nodes (never injects untrusted HTML). */
+/* Rook renderer: plain JS, no framework. Builds DOM nodes (never injects untrusted HTML). */
 const VA = window.api;
 const icon = window.VAIcon;
 
@@ -248,7 +248,7 @@ function blockedEl(b) {
 function botEl(m, isLast) {
   const writing = !m.done && !m.stopped;
   const running = m.blocks.some((b) => b.t === 'tool' && b.status === 'running');
-  const art = h('article', { cls: 'pr-bot', 'aria-label': 'Vault Assistant replied', 'aria-live': writing ? 'polite' : 'off' });
+  const art = h('article', { cls: 'pr-bot', 'aria-label': 'Rook replied', 'aria-live': writing ? 'polite' : 'off' });
   if (writing) art.append(h('span', { cls: 'va-streaming va-kicker va-kicker--gold', role: 'status', style: 'margin-bottom: 9.2px; display: inline-flex' },
     h('span', { cls: 'va-streaming__dots', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')), running ? 'Reading the vault' : 'Writing'));
   for (const b of m.blocks) {
@@ -584,7 +584,7 @@ function buildShell() {
   R.chatsBtn = iconBtn('chat', 'Saved chats', () => { S.view = S.view === 'chats' ? 'chat' : 'chats'; paintAll(); }, { title: 'Saved chats' });
   const head = h('header', { cls: 'va-masthead' },
     icon('book', 'va-masthead__mark'),
-    h('h1', { cls: 'va-masthead__name', text: 'Vault Assistant' }),
+    h('h1', { cls: 'va-masthead__name', text: 'Rook' }),
     h('span', { cls: 'va-kicker va-masthead__date', text: mastDate() }),
     h('div', { cls: 'va-masthead__actions' },
       iconBtn('plus', 'New conversation', newChat, { title: 'New conversation (Ctrl N)' }),
