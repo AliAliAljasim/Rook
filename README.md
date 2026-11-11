@@ -7,6 +7,10 @@ Writes are allowed only inside the vault; everything else is read-only.
 - **Notes**: a folder tree with a Note/Map toggle. Note is a read-only markdown viewer (frontmatter, callouts, nested lists, tables, wiki-links, linked notes). Map is a graph of notes (dots) and `[[links]]` (lines): drag, zoom, click a dot, double-click to open.
 - **Mini modes**: a side chat (narrow always-on-top panel showing the conversation) and a quick-capture bar. Each remembers its own spot; Ctrl M toggles the last one used.
 
+## Background
+Closing the window keeps Rook running in the system tray, so a reply in progress carries on. Click the tray icon to reopen; right-click it to quit.
+Starting Rook again brings the running one forward.
+
 ## Updates
 Rook checks GitHub releases shortly after launch and every few hours. A newer version shows as an "Update available" button in the top bar:
 clicking it downloads in the background and Rook restarts into the new version when the download is done (Settings → About has a manual check). The repo is private, so each check gets a token from `gh auth token` inside WSL; nothing is stored.

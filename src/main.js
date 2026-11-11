@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, screen, Tray, Menu, Notification } = require('electron');
 const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -107,6 +107,36 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.loadFile(path.join(__dirname, 'index.html'));
+  // Closing the window keeps Rook running in the tray (a reply in progress carries on); Quit is in the tray menu.
+  win.on('close', (e) => {
+    if (quitting || !tray) return;
+    e.preventDefault();
+    saveMiniSpot();
+    win.hide();
+    if (!readJson(userFile('window.json'), {}).trayHintShown) {
+      try {
+        new Notification({ title: 'Rook is still running', body: 'It stays in the tray by the clock. Right-click its icon to quit.' }).show();
+        fs.writeFileSync(userFile('window.json'), JSON.stringify({ ...readJson(userFile('window.json'), {}), trayHintShown: true }));
+      } catch { /* the hint is optional */ }
+    }
+  });
+}
+
+// ---- background: tray icon, single instance ------------------------------------------
+let tray = null, quitting = false;
+function showWindow() {
+  if (!win || win.isDestroyed()) return createWindow();
+  if (win.isMinimized()) win.restore();
+  win.show(); win.focus();
+}
+function quitApp() { quitting = true; app.quit(); }
+function createTray() {
+  try {
+    tray = new Tray(path.join(__dirname, '..', 'build', 'icon.ico'));
+    tray.setToolTip('Rook');
+    tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Rook', click: showWindow }, { type: 'separator' }, { label: 'Quit Rook', click: quitApp }]));
+    tray.on('click', showWindow);
+  } catch { tray = null; /* no tray available: closing the window quits as before */ }
 }
 
 const sender = (e) => e.sender;
@@ -355,10 +385,18 @@ ipcMain.on('update:download', () => {
   setUpd({ state: 'downloading', percent: 0 });
   updater.downloadUpdate().catch((e) => setUpd({ state: 'error', error: String(e && e.message || e).slice(0, 300) }));
 });
-ipcMain.on('update:install', () => { if (upd.state === 'ready' && updater) { saveMiniSpot(); updater.quitAndInstall(true, true); } });
+ipcMain.on('update:install', () => { if (upd.state === 'ready' && updater) { saveMiniSpot(); quitting = true; updater.quitAndInstall(true, true); } });
+
+// Starting Rook again while it is in the tray brings the running one forward instead of opening a second.
+const primary = app.requestSingleInstanceLock();
+if (!primary) app.quit();
+app.on('second-instance', showWindow);
+app.on('before-quit', () => { quitting = true; });
 
 app.whenReady().then(() => {
+  if (!primary) return;
   migrateOldData();
+  createTray();
   createWindow();
   setTimeout(checkUpdates, 8000);
   setInterval(checkUpdates, 4 * 3600e3);
