@@ -1,0 +1,113 @@
+/* Vault Assistant — Classical tokens (shared with Wren)
+   Generated from tokens.json. Paper is the default ground; put data-theme="colophon"
+   on any element (the conversation column, a toast) to switch that subtree.
+   Fonts: ship the woff2 files in ./fonts/ for offline Electron use (SIL OFL 1.1,
+   latin subsets, shipped beside this file). */
+
+@font-face { font-family: "Source Serif 4"; font-style: normal; font-weight: 400; font-display: swap; src: local("Source Serif 4"), url("./fonts/SourceSerif4-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Source Serif 4"; font-style: italic; font-weight: 400; font-display: swap; src: local("Source Serif 4"), url("./fonts/SourceSerif4-Italic.woff2") format("woff2"); }
+@font-face { font-family: "Source Serif 4"; font-style: normal; font-weight: 600; font-display: swap; src: local("Source Serif 4"), url("./fonts/SourceSerif4-SemiBold.woff2") format("woff2"); }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 400; font-display: swap; src: local("Inter"), url("./fonts/Inter-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 500; font-display: swap; src: local("Inter"), url("./fonts/Inter-Medium.woff2") format("woff2"); }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 600; font-display: swap; src: local("Inter"), url("./fonts/Inter-SemiBold.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: local("JetBrains Mono"), url("./fonts/JetBrainsMono-Regular.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 500; font-display: swap; src: local("JetBrains Mono"), url("./fonts/JetBrainsMono-Medium.woff2") format("woff2"); }
+
+:root, [data-theme="paper"] {
+  --bg: #f3f2f2;
+  --surface: #eae9e9;
+  --text: #201f1d;
+  --text-secondary: rgba(32,31,29,0.78);
+  --text-meta: rgba(32,31,29,0.64);
+  --text-tertiary: rgba(32,31,29,0.62);
+  --text-quiet: rgba(32,31,29,0.58);
+  --text-faint: rgba(32,31,29,0.55);
+  --text-disabled: rgba(32,31,29,0.45);
+  --divider: rgba(32,31,29,0.16);
+  --rule: rgba(32,31,29,0.12);
+  --border: rgba(32,31,29,0.24);
+  --border-control: rgba(32,31,29,0.5);
+  --wash: rgba(32,31,29,0.07);
+  --wash-strong: rgba(32,31,29,0.12);
+  --accent: #b68235;
+  --accent-strong: #a06f24;
+  --accent-text: #7d5411;
+  --accent-wash: rgba(182,130,53,0.10);
+  --accent-wash-strong: rgba(182,130,53,0.20);
+  --focus: #a06f24;
+  --danger: #9b2c1f;
+  --scrim: rgba(32,31,29,0.32);
+  --gold-100: #fff3e4;
+  --gold-200: #ffe3bf;
+  --gold-300: #facb8d;
+  --gold-400: #e1ad66;
+  --gold-500: #c28d41;
+  --gold-600: #a06f24;
+  --gold-700: #7d5411;
+  --gold-800: #5a3b0a;
+  --gold-900: #3a270d;
+  --neutral-100: #f8f4f4;
+  --neutral-900: #2d2b2b;
+}
+[data-theme="colophon"] {
+  --bg: #201f1f;
+  --surface: #2a2929;
+  --text: #f3f2f2;
+  --text-secondary: rgba(243,242,242,0.72);
+  --text-meta: rgba(243,242,242,0.62);
+  --text-tertiary: rgba(243,242,242,0.62);
+  --text-quiet: rgba(243,242,242,0.55);
+  --text-faint: rgba(243,242,242,0.55);
+  --text-disabled: rgba(243,242,242,0.45);
+  --divider: rgba(243,242,242,0.16);
+  --rule: rgba(243,242,242,0.12);
+  --border: rgba(243,242,242,0.24);
+  --border-control: rgba(243,242,242,0.45);
+  --wash: rgba(243,242,242,0.08);
+  --wash-strong: rgba(243,242,242,0.14);
+  --accent-strong: #c28d41;
+  --accent-text: #e1ad66;
+  --focus: #c28d41;
+  --danger: #e58a7a;
+  --scrim: rgba(0,0,0,0.48);
+}
+:root {
+  --space-1: 4.6px;
+  --space-2: 9.2px;
+  --space-3: 13.8px;
+  --space-4: 18.4px;
+  --space-5: 27.6px;
+  --space-6: 36.8px;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 7px;
+  --hit-min: 40px;
+  --measure: 600px;
+  --sidebar: 264px;
+  --masthead: 52px;
+  --rule-width: 1px;
+  --focus-width: 2px;
+  --duration-quick: 200ms;
+  --duration-base: 250ms;
+  --duration-slow: 300ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --font-display: "Source Serif 4", "Source Serif Pro", Georgia, "Times New Roman", serif;
+  --font-body: Inter, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --duration-quick: 0ms; --duration-base: 0ms; --duration-slow: 0ms; }
+}
+.display { font-family: var(--font-display); font-size: 36px; line-height: 42px; font-weight: 400; }
+.heading-1 { font-family: var(--font-display); font-size: 28px; line-height: 34px; font-weight: 400; }
+.heading-2 { font-family: var(--font-display); font-size: 21px; line-height: 28px; font-weight: 500; }
+.heading-3 { font-family: var(--font-display); font-size: 17px; line-height: 24px; font-weight: 600; }
+.title { font-family: var(--font-display); font-size: 16px; line-height: 22px; font-weight: 500; }
+.reply { font-family: var(--font-display); font-size: 16px; line-height: 26px; font-weight: 400; }
+.body { font-family: var(--font-body); font-size: 15px; line-height: 24px; font-weight: 400; }
+.label { font-family: var(--font-body); font-size: 14px; line-height: 20px; font-weight: 500; }
+.body-sm { font-family: var(--font-body); font-size: 13.8px; line-height: 21px; font-weight: 400; }
+.caption { font-family: var(--font-body); font-size: 12.5px; line-height: 18px; font-weight: 400; }
+.kicker { font-family: var(--font-body); font-size: 11px; line-height: 14px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; }
+.mono { font-family: var(--font-mono); font-size: 12.6px; line-height: 20px; font-weight: 400; }
+.mono-sm { font-family: var(--font-mono); font-size: 11.5px; line-height: 16px; font-weight: 400; }

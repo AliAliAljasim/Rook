@@ -7,7 +7,8 @@
   "scripts": {
     "start": "electron .",
     "dist:win": "electron-builder --win --x64",
-    "release:win": "bash scripts/release.sh"
+    "release:win": "bash scripts/release.sh",
+    "test": "node --test test/"
   },
   "devDependencies": {
     "electron": "^45.3.0",

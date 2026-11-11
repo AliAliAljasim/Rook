@@ -1,4 +1,4 @@
-.PHONY: help login install start check dist release clean
+.PHONY: help login install start check test dist release clean
 
 help:        ## list targets
 	@grep -E '^[a-z]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/ -/'
@@ -14,6 +14,9 @@ start:       ## run the app in dev mode (needs a display; use the installer on W
 
 check:       ## syntax-check all source files
 	@for f in src/*.js; do node --check $$f && echo "ok $$f"; done
+
+test:        ## run unit tests (vault write guard)
+	npm test
 
 dist:        ## build the Windows installer from WSL -> dist/vault-assistant-setup-<ver>.exe
 	WINEDEBUG=-all npm run dist:win
