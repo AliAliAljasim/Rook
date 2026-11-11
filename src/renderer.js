@@ -254,9 +254,6 @@ function paintHome() {
       h('button', { type: 'button', cls: 'quick', onClick: () => { $('ask').value = fill; autogrow(); paintAsk(); focusAsk(); } },
         h('span', { cls: 'quick-icon' }, icon(ic, 'sm')), h('span', { cls: 'quick-title', text: t }), h('span', { cls: 'quick-desc', text: d })))),
     h('section', { cls: 'sec' },
-      h('div', { cls: 'sec-head' }, h('h2', { text: 'Recent notes' }), h('button', { type: 'button', cls: 'sec-link', onClick: () => go('notes') }, 'All notes')),
-      h('div', { cls: 'rows' }, S.recent.length ? S.recent.map(noteRow) : h('p', { cls: 'empty', text: 'No notes in this vault yet.' }))),
-    h('section', { cls: 'sec' },
       h('div', { cls: 'sec-head' }, h('h2', { text: 'Recent chats' }), h('button', { type: 'button', cls: 'sec-link', onClick: () => go('history') }, `All ${S.chats.length}`)),
       h('div', { cls: 'rows' }, chats.length ? chats.map((c) => row('chat', c.title, chatPreview(c), chatMeta(c.when), () => openChat(c), { pinned: c.pinned }))
         : h('p', { cls: 'empty', text: 'Conversations you have with Rook appear here.' }))));
