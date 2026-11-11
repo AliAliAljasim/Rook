@@ -202,6 +202,7 @@ function onEvent(ev) {
     if (ev.code && !bot.stopped) bot.error = ev.stderr || `claude exited with code ${ev.code}`;
     S.cur.when = Date.now();
     persist(); loadNotes(); paintAsk();
+    installWhenIdle(); // an update that finished downloading mid-reply waited for this
   }
   scheduleChat();
 }
@@ -565,34 +566,42 @@ async function paintSettings() {
 }
 
 // ---------- updates ----------
+// An update shows as a button in the top bar. Clicking it downloads in the background; Rook restarts
+// into the new version once the download is done (and any reply in progress has finished).
 function updateText(u) {
   switch (u.state) {
     case 'checking': return 'Checking for updates…';
     case 'current': return 'Rook is up to date.';
-    case 'downloading': return `Downloading version ${u.version || ''}… ${u.percent || 0}%`;
-    case 'ready': return `Version ${u.version} is ready. It installs when Rook restarts.`;
+    case 'available': return `Version ${u.version} is available.`;
+    case 'downloading': return `Updating to version ${u.version || ''}… ${u.percent || 0}%. Rook restarts when it is done.`;
+    case 'ready': return `Version ${u.version} is ready. Restarting…`;
     case 'error': return 'Could not check for updates.';
     case 'dev': return 'Updates are off in the development build.';
-    default: return 'Updates install automatically.';
+    default: return 'Rook checks for updates on its own.';
   }
 }
-function paintUpdate() {
-  const slot = $('upd-slot');
-  if (!slot) return;
+function updateButton(cls) {
   const u = S.update;
-  const busy = u.state === 'checking' || u.state === 'downloading';
-  slot.replaceChildren(h('span', { cls: 'muted', role: 'status', title: u.error || '', text: updateText(u) }),
-    u.state === 'ready' ? pill('pill-ghost', 'Restart to update', () => VA.update.install())
-      : h('button', { type: 'button', cls: 'pill-ghost', disabled: busy, onClick: () => VA.update.check() }, 'Check for updates'));
-  if (u.state === 'error' && u.error) slot.after(h('p', { cls: 'sp-help warn upd-err', text: u.error }));
-  else document.querySelectorAll('.upd-err').forEach((e) => e.remove());
+  if (u.state === 'available') return h('button', { type: 'button', cls, title: `Update to version ${u.version}. Rook restarts when the download is done.`, onClick: () => VA.update.download() }, h('span', { cls: 'upd-dot', 'aria-hidden': 'true' }), 'Update available');
+  if (u.state === 'downloading') return h('button', { type: 'button', cls, disabled: true, title: 'Downloading in the background' }, h('span', { cls: 'spinner', 'aria-hidden': 'true' }), `Updating… ${u.percent || 0}%`);
+  if (u.state === 'ready') return h('button', { type: 'button', cls, title: 'Restart into the new version', onClick: () => VA.update.install() }, h('span', { cls: 'upd-dot', 'aria-hidden': 'true' }), 'Restart to update');
+  return null;
 }
-function onUpdate(u) {
-  const was = S.update.state;
-  S.update = u;
+function paintUpdate() {
+  const u = S.update;
+  $('upd-pill').replaceChildren(...[updateButton('upd-pill')].filter(Boolean));
+  const slot = $('upd-slot'); // Settings › About, when that page is showing
+  if (!slot) return;
   document.querySelectorAll('.upd-err').forEach((e) => e.remove());
+  slot.replaceChildren(h('span', { cls: 'muted', role: 'status', text: updateText(u) }),
+    updateButton('pill-ghost') || h('button', { type: 'button', cls: 'pill-ghost', disabled: u.state === 'checking', onClick: () => VA.update.check() }, 'Check for updates'));
+  if (u.state === 'error' && u.error) slot.after(h('p', { cls: 'sp-help warn upd-err', text: u.error }));
+}
+function installWhenIdle() { if (S.update.state === 'ready' && !S.streaming) VA.update.install(); }
+function onUpdate(u) {
+  S.update = u;
   paintUpdate();
-  if (u.state === 'ready' && was !== 'ready') toast(`Rook ${u.version} is ready.`, { action: 'Restart', onAction: () => VA.update.install() });
+  installWhenIdle();
 }
 
 // ---------- ask bar + compact strip ----------
@@ -668,7 +677,7 @@ function wire() {
   $('brand-mark').append(mark());
   $('compact-mark').append(mark('compact-mark'));
   $('go-home').addEventListener('click', () => go('home'));
-  $('topbar-tools').append(tool('plus', 'New conversation', newChat, { title: 'New conversation (Ctrl N)' }),
+  $('topbar-tools').append(h('span', { id: 'upd-pill' }), tool('plus', 'New conversation', newChat, { title: 'New conversation (Ctrl N)' }),
     tool('chat', 'Side chat', () => setMini('panel'), { title: 'Side chat' }),
     tool('compact', 'Quick-capture bar', () => setMini('bar'), { title: 'Quick-capture bar' }),
     tool('settings', 'Settings', () => go('settings'), { title: 'Settings (Ctrl ,)' }));
@@ -706,6 +715,7 @@ function wire() {
   S.version = await VA.version().catch(() => '');
   S.update = await VA.update.get().catch(() => S.update);
   VA.update.onStatus(onUpdate);
+  paintUpdate();
   S.chats = (await VA.loadChats()) || [];
   for (const c of S.chats) for (const m of c.msgs) if (m.role === 'bot' && !m.done) { m.done = true; m.stopped = true; }
   await loadNotes();

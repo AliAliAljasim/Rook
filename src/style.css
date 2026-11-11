@@ -83,6 +83,13 @@ input, textarea { font: inherit; color: inherit; }
 .topnav button:hover { color: var(--fg-2); }
 .topnav button.on { background: rgba(255,255,255,.1); color: var(--fg-2); }
 @media (max-width: 980px) { .topbar { gap: 16px; } }
+.upd-pill:empty, #upd-pill:empty { display: none; }
+#upd-pill { display: flex; margin-right: 6px; }
+button.upd-pill { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border-radius: 15px; background: rgba(224,164,88,.16); color: var(--accent); font-size: 12.5px; font-weight: 600; white-space: nowrap; transition: background .15s; }
+button.upd-pill:hover:not(:disabled) { background: rgba(224,164,88,.26); }
+button.upd-pill:disabled { cursor: default; }
+button.upd-pill .spinner { width: 12px; height: 12px; }
+.upd-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
 .topbar-tools { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .tool-btn { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--muted); transition: background .15s, color .15s; flex: none; }
 .tool-btn:hover, .tool-btn.on { background: rgba(255,255,255,.1); color: var(--fg-2); }

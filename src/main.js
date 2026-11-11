@@ -262,7 +262,14 @@ ipcMain.on('chat:send', (e, { prompt, sessionId }) => {
   const args = ['--cd', `/${vaultWsl}`, '-e', cfg.claudePath, '-p',
     '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
     '--settings', `/${toWsl(policyFile)}`,
-    '--append-system-prompt', SYSTEM_PROMPT(`/${vaultWsl}`, cfg.readScope)];
+    '--append-system-prompt', SYSTEM_PROMPT(`/${vaultWsl}`, cfg.readScope, {
+      home: (/^\/home\/[^/]+/.exec(cfg.claudePath) || [])[0],
+      winHome: (/^\/mnt\/[a-z]\/Users\/[^/]+/i.exec(`/${vaultWsl}`) || [])[0]
+    })];
+  // Reading the whole machine: the CLI only lists and searches inside its working directories, so add the
+  // filesystem root as one. This does not grant writes: with no allow rule for them, edits and any shell
+  // command that creates or changes a file outside the vault are still refused.
+  if (cfg.readScope !== 'vault') args.push('--add-dir', '/');
   if (sessionId) args.push('--resume', sessionId);
 
   child = spawn('wsl.exe', args, { windowsHide: true });
@@ -308,6 +315,7 @@ function migrateOldData() {
 // asks the GitHub CLI inside WSL (`gh auth token`) and keeps the answer in memory only.
 let upd = { state: 'idle', version: null, percent: 0, error: null };
 let updater = null;
+const UPDATE_REPO = { owner: 'AliAliAljasim', repo: 'rook' }; // same as build.publish in package.json (not available once packaged)
 function setUpd(patch) {
   upd = { ...upd, ...patch };
   if (win && !win.isDestroyed()) win.webContents.send('update:status', upd);
@@ -319,23 +327,22 @@ const ghToken = () => new Promise((resolve) => {
 });
 async function checkUpdates() {
   if (!app.isPackaged) return setUpd({ state: 'dev' });
-  if (['checking', 'downloading', 'ready'].includes(upd.state)) return;
+  if (['checking', 'available', 'downloading', 'ready'].includes(upd.state)) return;
   setUpd({ state: 'checking', error: null });
   try {
     if (!updater) {
       updater = require('electron-updater').autoUpdater;
-      updater.autoDownload = true;
+      updater.autoDownload = false;        // the user starts it from the "Update available" button
       updater.autoInstallOnAppQuit = true; // a downloaded update is applied the next time Rook closes
-      updater.on('update-available', (i) => setUpd({ state: 'downloading', version: i.version, percent: 0 }));
+      updater.on('update-available', (i) => setUpd({ state: 'available', version: i.version, percent: 0 }));
       updater.on('update-not-available', () => setUpd({ state: 'current' }));
       updater.on('download-progress', (p) => setUpd({ state: 'downloading', percent: Math.round(p.percent || 0) }));
       updater.on('update-downloaded', (i) => setUpd({ state: 'ready', version: i.version, percent: 100 }));
       updater.on('error', (e) => setUpd({ state: 'error', error: String(e && e.message || e).slice(0, 300) }));
     }
-    const pub = require('../package.json').build.publish[0];
     const token = await ghToken();
     if (!token) return setUpd({ state: 'error', error: 'No GitHub sign-in found in WSL. Run "gh auth login" there; the repository is private.' });
-    updater.setFeedURL({ provider: 'github', owner: pub.owner, repo: pub.repo, private: true, token });
+    updater.setFeedURL({ provider: 'github', ...UPDATE_REPO, private: true, token });
     await updater.checkForUpdates();
   } catch (e) {
     setUpd({ state: 'error', error: String(e && e.message || e).slice(0, 300) });
@@ -343,6 +350,11 @@ async function checkUpdates() {
 }
 ipcMain.handle('update:get', () => upd);
 ipcMain.on('update:check', () => { checkUpdates(); });
+ipcMain.on('update:download', () => {
+  if (upd.state !== 'available' || !updater) return;
+  setUpd({ state: 'downloading', percent: 0 });
+  updater.downloadUpdate().catch((e) => setUpd({ state: 'error', error: String(e && e.message || e).slice(0, 300) }));
+});
 ipcMain.on('update:install', () => { if (upd.state === 'ready' && updater) { saveMiniSpot(); updater.quitAndInstall(true, true); } });
 
 app.whenReady().then(() => {

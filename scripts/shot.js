@@ -64,9 +64,9 @@ for (const [c, f] of Object.entries({ 'config:get': () => cfg, 'config:set': (_,
   'vault:graph': () => graph,
   'note:resolve': (_, name) => (all.find((n) => n.title.toLowerCase() === String(name).toLowerCase()) || {}).file || null,
   'note:read': (_, rel) => ({ file: rel, content: rel.includes('Atlas launch') ? noteText : '# ' + rel + '\n\nA short note that links to [[Atlas launch plan]].', mtimeMs: now - 2 * 3600e3 }),
-  'vault:info': () => ({ ok: true, notes: 1284, folders: 96 }), 'chats:load': () => chats, 'chats:save': () => true, 'note:open': () => true, 'app:version': () => '0.2.0', 'update:get': () => ({ state: 'current' }) }))
+  'vault:info': () => ({ ok: true, notes: 1284, folders: 96 }), 'chats:load': () => chats, 'chats:save': () => true, 'note:open': () => true, 'app:version': () => '0.2.0', 'update:get': () => ({ state: 'available', version: '0.5.0' }) }))
   ipcMain.handle(c, f);
-['chat:send', 'chat:cancel', 'clipboard:write', 'update:check', 'update:install', 'win:mini', 'win:minimize', 'win:maximize', 'win:close'].forEach((c) => ipcMain.on(c, () => {}));
+['chat:send', 'chat:cancel', 'clipboard:write', 'update:check', 'update:download', 'update:install', 'win:mini', 'win:minimize', 'win:maximize', 'win:close'].forEach((c) => ipcMain.on(c, () => {}));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });

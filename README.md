@@ -8,8 +8,8 @@ Writes are allowed only inside the vault; everything else is read-only.
 - **Mini modes**: a side chat (narrow always-on-top panel showing the conversation) and a quick-capture bar. Each remembers its own spot; Ctrl M toggles the last one used.
 
 ## Updates
-Rook checks GitHub releases shortly after launch and every few hours, downloads a newer version in the background and installs it on restart
-(Settings → About shows the status and a manual check). The repo is private, so each check gets a token from `gh auth token` inside WSL; nothing is stored.
+Rook checks GitHub releases shortly after launch and every few hours. A newer version shows as an "Update available" button in the top bar:
+clicking it downloads in the background and Rook restarts into the new version when the download is done (Settings → About has a manual check). The repo is private, so each check gets a token from `gh auth token` inside WSL; nothing is stored.
 Publish a version with `make release` after bumping `version` and pushing main.
 
 ## Design
