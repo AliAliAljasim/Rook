@@ -156,23 +156,44 @@ async function openChanges(c) {
 const EFFORT_LABEL = { '': 'Auto', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const agentLabel = () => [S.cfg.model ? cap(S.cfg.model) : '', S.cfg.effort ? `${EFFORT_LABEL[S.cfg.effort].toLowerCase()} effort` : ''].filter(Boolean).join(', ');
-const SLASH = [{ cmd: '/agent', desc: 'Choose the model and how hard it thinks', run: () => openAgentPop() }];
-let popKind = null; // 'slash' | 'agent' | null
+const SLASH = [
+  { cmd: '/agent', desc: 'Choose the model and how hard it thinks', run: () => openAgentPop() },
+  { cmd: '/clip', desc: 'Save a web page to the vault: /clip https://…', arg: true, run: (arg) => runClip(arg) }
+];
+let popKind = null; // 'slash' | 'agent' | 'voice' | 'note' | null
 function closePop() { if (!popKind) return false; popKind = null; $('ask-pop').classList.add('hidden'); $('ask-pop').replaceChildren(); return true; }
 function showPop(kind, ...nodes) { popKind = kind; const p = $('ask-pop'); p.replaceChildren(...nodes); p.classList.remove('hidden'); }
-const slashMatches = (value) => (/^\/\S*$/.test(value) ? SLASH.filter((c) => c.cmd.startsWith(value.toLowerCase())) : []);
+// "/ag" lists the commands that start that way; "/clip https://…" is a command with its argument.
+function slashMatches(value) {
+  const m = /^(\/\S*)(\s+(.*))?$/.exec(value);
+  if (!m) return [];
+  const head = m[1].toLowerCase();
+  return m[2] === undefined ? SLASH.filter((c) => c.cmd.startsWith(head)) : SLASH.filter((c) => c.arg && c.cmd === head);
+}
+const slashArg = (value) => (/^\/\S*\s+(.*)$/.exec(value) || [])[1] || '';
+// A message that is nothing but a web address: Rook cannot browse, so what it can do with it is clip the page.
+const CLIP_URL = { cmd: 'Clip this page', desc: 'Fetch it and save a summary note to the vault', url: true };
 // Called as the user types: a message starting with "/" lists the commands that match.
 function updateSlash(value) {
-  const hits = slashMatches(value);
+  const hits = URL_ONLY.test(value.trim()) ? [CLIP_URL] : slashMatches(value);
   if (!hits.length) { if (popKind === 'slash') closePop(); return; }
-  showPop('slash', ...hits.map((c) => h('button', { type: 'button', cls: 'pop-cmd', onClick: () => runSlash(c) }, h('b', { text: c.cmd }), h('span', { text: c.desc }))));
+  showPop('slash', ...hits.map((c) => h('button', { type: 'button', cls: 'pop-cmd', onClick: () => runSlash(c, value) }, h('b', { text: c.cmd }), h('span', { text: c.desc }))));
 }
-function runSlash(c) { $('ask').value = ''; autogrow(); paintAsk(); c.run(); }
-// Enter on a "/..." message runs the command instead of sending it. Returns true when it did.
+function runSlash(c, value) {
+  const arg = c.url ? value.trim() : slashArg(value).trim();
+  if (c.arg && !arg) { // the command needs something after it: leave it in the box, ready for the rest
+    $('ask').value = c.cmd + ' '; autogrow(); paintAsk(); closePop(); focusAsk();
+    return;
+  }
+  $('ask').value = ''; autogrow(); paintAsk(); closePop();
+  if (c.url) runClip(arg); else c.run(arg);
+}
+// Enter on a "/..." message, or on a lone web address, runs the command instead of sending it. Returns true when it did.
 function trySlash(value) {
-  const hits = slashMatches(value.trim());
+  const v = value.trim();
+  const hits = URL_ONLY.test(v) ? [CLIP_URL] : slashMatches(v);
   if (!hits.length) return false;
-  runSlash(hits[0]);
+  runSlash(hits[0], v);
   return true;
 }
 function openAgentPop() {

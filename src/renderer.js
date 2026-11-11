@@ -22,7 +22,7 @@ const pill = (cls, label, onClick, ic) => h('button', { type: 'button', cls, onC
 const S = {
   cfg: null, recent: [], all: [], names: new Set(), noteCount: 0, chats: [], cur: null,
   view: 'home', prevView: 'home', streaming: false, mini: false,
-  note: null, noteCtx: true, pane: 'map', treeOpen: new Set(), treeFilter: '',
+  note: null, noteCtx: true, noteSel: '', pane: 'map', treeOpen: new Set(), treeFilter: '',
   graph: null, graphStale: true, map: null, mapSel: null, mapFilter: '',
   chatFilter: '', chatTab: 'all', renaming: null, version: '', update: { state: 'idle' }, plist: false
 };
@@ -88,7 +88,7 @@ async function openNote(nameOrFile) {
     const n = await VA.readNote(file);
     const i = file.lastIndexOf('/');
     S.note = { ...n, title: file.slice(i + 1).replace(/\.md$/i, ''), folder: i < 0 ? '' : file.slice(0, i + 1) };
-    S.noteCtx = true;
+    S.noteCtx = true; S.noteSel = '';
     let acc = '';
     for (const part of S.note.folder.split('/').filter(Boolean)) { acc += part + '/'; S.treeOpen.add(acc); }
     S.pane = 'note';
@@ -210,7 +210,8 @@ function onEvent(ev) {
 VA.onEvent(onEvent);
 
 // ---------- sending ----------
-function send(text) {
+// opts: { lead } extra context for the agent that is not shown in the chat; { clip, clipUrl } mark a web clipping.
+function send(text, opts = {}) {
   text = String(text || '').trim();
   if (S.streaming || (!text && !ATTACH.length)) return;
   const files = takeAttachments();
@@ -221,11 +222,15 @@ function send(text) {
     S.cur = { id: 'c' + Date.now(), title: text.length > 44 ? text.slice(0, 43) + '…' : text, when: Date.now(), pinned: false, sessionId: null, msgs: [] };
     S.chats.unshift(S.cur);
   }
-  S.cur.msgs.push({ role: 'user', text, time: clock(), about: about ? about.title : null, files: files.length ? files.map((f) => f.name) : undefined }, { role: 'bot', time: clock(), blocks: [], done: false });
+  const sel = about ? S.noteSel : '';
+  S.noteSel = '';
+  S.cur.msgs.push({ role: 'user', text, time: clock(), about: about ? about.title + (sel ? ' · highlighted text' : '') : null, files: files.length ? files.map((f) => f.name) : undefined,
+    clip: opts.clip || undefined, clipUrl: opts.clipUrl || undefined }, { role: 'bot', time: clock(), blocks: [], done: false });
   S.streaming = true;
   $('ask').value = ''; $('compact-input').value = ''; autogrow();
   const lead = [about ? `[The note "${about.file}" in the vault is open in the viewer; this message is about it.]` : '',
-    files.length ? `[Attached files, saved in the vault: ${files.map((f) => f.rel).join(', ')}]` : ''].filter(Boolean).join('\n');
+    sel ? `[The user highlighted the passage below in that note; the message is about this passage in particular.]\n<<<PASSAGE\n${sel}\nPASSAGE>>>` : '',
+    files.length ? `[Attached files, saved in the vault: ${files.map((f) => f.rel).join(', ')}]` : '', opts.lead || ''].filter(Boolean).join('\n');
   VA.send(lead ? `${lead}\n\n${text}` : text, S.cur.sessionId);
   persist(); go('home');
   requestAnimationFrame(() => { $('scroller').scrollTop = $('scroller').scrollHeight; });
@@ -240,6 +245,7 @@ function retry() {
   const msgs = S.cur?.msgs;
   if (!msgs || S.streaming || msgs.length < 2) return;
   msgs.pop(); const user = msgs.pop();
+  if (user.clipUrl) return runClip(user.clipUrl); // the page text is not kept with the chat: fetch it again
   send(user.text);
 }
 function newChat() {
@@ -367,7 +373,9 @@ function paintChat() {
   S.cur.msgs.forEach((m, i) => {
     if (m.role === 'user') wrap.push(h('article', { cls: 'msg-user', 'aria-label': `You said, ${m.time}` },
       m.about ? h('span', { cls: 'msg-about' }, icon('file', 'sm'), m.about) : null,
-      (m.files || []).map((f) => h('span', { cls: 'msg-about' }, icon('clip', 'sm'), f)), h('p', { text: m.text })));
+      (m.files || []).map((f) => h('span', { cls: 'msg-about' }, icon('clip', 'sm'), f)),
+      m.clip ? h('span', { cls: 'msg-about' }, icon('globe', 'sm'), m.clip) : null,
+      m.scheduled ? h('span', { cls: 'msg-about' }, icon('clock', 'sm'), 'Scheduled prompt') : null, h('p', { text: m.text })));
     else wrap.push(botEl(m, i === S.cur.msgs.length - 1));
   });
   $('view-chat').replaceChildren(...wrap);
@@ -393,7 +401,7 @@ function paintTree() {
     inp.addEventListener('input', () => { S.treeFilter = inp.value; paintTree(); });
     $('tree-tools').append(h('label', { cls: 'filter' }, icon('search', 'sm'), inp), h('div', { id: 'pane-seg' }));
   }
-  $('pane-seg').replaceChildren(seg([['note', 'Note'], ['map', 'Map']], S.pane, (v) => { S.pane = v; paintTree(); paintPane(); }, 'Show'));
+  $('pane-seg').replaceChildren(seg([['note', 'Note'], ['map', 'Map'], ['health', 'Health']], S.pane, (v) => { S.pane = v; paintTree(); paintPane(); }, 'Show'));
   const noteItem = (n, depth) => h('button', { type: 'button', cls: 'tree-item' + (S.note?.file === n.file ? ' on' : ''), style: `padding-left:${8 + depth * 16}px`, title: n.file, onClick: () => openNote(n.file) },
     icon('file', 'sm'), h('span', { text: n.title }));
   const out = [];
@@ -441,7 +449,7 @@ function paintReader() {
     h('header', { cls: 'note-head' },
       h('span', { cls: 'eyebrow mono', text: n.folder || 'Vault' }), h('h1', { text: n.title }), h('span', { cls: 'note-meta', text: meta.join(' · ') }),
       h('div', { cls: 'note-acts' },
-        pill('pill pill-accent', 'Ask Rook about this', () => { S.noteCtx = true; paintAsk(); focusAsk(); }, 'chat'),
+        pill('pill pill-accent', 'Ask Rook about this', openNotePop, 'chat'),
         pill('pill pill-outline', 'Open in Obsidian', () => VA.openNote(n.file), 'external'),
         pill('pill pill-outline', 'Show on map', () => showOnMap(n.file), 'graph'))),
     body,
@@ -454,7 +462,8 @@ function paintReader() {
 function paintPane() {
   $('reader').classList.toggle('hidden', S.pane !== 'note');
   $('map-pane').classList.toggle('hidden', S.pane !== 'map');
-  if (S.pane === 'note') paintReader(); else paintMap();
+  $('health-pane').classList.toggle('hidden', S.pane !== 'health');
+  if (S.pane === 'note') paintReader(); else if (S.pane === 'map') paintMap(); else paintHealth();
   paintAsk();
 }
 async function paintMap() {
@@ -592,8 +601,8 @@ async function paintSettings() {
   // Scheduled notes
   const schedHost = h('div', { cls: 'sp-stack' });
   const paintSched = () => {
-    const sc = { dailyDays: [], weeklyDay: -1, weeklyHour: 16, ...(S.cfg.schedule || {}) };
-    const setSched = async (patch) => { await save({ schedule: { ...sc, ...patch } }, null); paintSched(); };
+    const sc = { dailyDays: [], weeklyDay: -1, weeklyHour: 16, prompts: [], ...(S.cfg.schedule || {}) };
+    const setSched = async (patch) => { await save({ schedule: { ...sc, prompts: (S.cfg.schedule || {}).prompts || [], ...patch } }, null); paintSched(); }; // prompts are edited below: never write back an older copy
     const order = [1, 2, 3, 4, 5, 6, 0]; // Monday first
     const dayBtns = h('div', { cls: 'day-picks', role: 'group', 'aria-label': 'Days that get a daily note' }, order.map((d) =>
       h('button', { type: 'button', cls: sc.dailyDays.includes(d) ? 'on' : '', 'aria-pressed': String(sc.dailyDays.includes(d)),
@@ -614,6 +623,59 @@ async function paintSettings() {
       h('div', { cls: 'sp-line' }, h('span', { cls: 'sp-help', text: 'Scheduled notes need Rook running; it can sit in the tray.' }), runNow));
   };
   paintSched();
+
+  // Scheduled notes: the user's own prompts
+  const promptHost = h('div', { cls: 'sp-stack' });
+  const blank = () => ({ id: null, name: '', prompt: '', days: [1, 2, 3, 4, 5], hour: 9 });
+  let draft = blank();
+  const paintPrompts = () => {
+    const list = (S.cfg.schedule && S.cfg.schedule.prompts) || [], order = [1, 2, 3, 4, 5, 6, 0];
+    const savePrompts = async (prompts, msg) => { await save({ schedule: { ...S.cfg.schedule, prompts } }, msg); paintPrompts(); };
+    const when = (p) => `${p.days.length === 7 ? 'Every day' : order.filter((d) => p.days.includes(d)).map((d) => DAYS[d]).join(', ')} at ${pad(p.hour)}:00`;
+    const pName = h('input', { cls: 'sp-input', placeholder: 'Name, e.g. Morning brief', 'aria-label': 'Prompt name', value: draft.name });
+    pName.addEventListener('input', () => { draft.name = pName.value; });
+    const pText = h('textarea', { cls: 'sp-input sp-area', rows: '3', placeholder: 'What Rook should do, e.g. List what is still open in my projects and add it to today’s note.', 'aria-label': 'Prompt' });
+    pText.value = draft.prompt;
+    pText.addEventListener('input', () => { draft.prompt = pText.value; });
+    const dayBtns = h('div', { cls: 'day-picks', role: 'group', 'aria-label': 'Days this prompt runs' }, order.map((d) =>
+      h('button', { type: 'button', cls: draft.days.includes(d) ? 'on' : '', 'aria-pressed': String(draft.days.includes(d)),
+        onClick: () => { draft.days = draft.days.includes(d) ? draft.days.filter((x) => x !== d) : [...draft.days, d]; paintPrompts(); } }, DAYS[d])));
+    const hourSel = h('select', { cls: 'sp-select', 'aria-label': 'Hour this prompt runs' }, Array.from({ length: 24 }, (_, hr) => h('option', { value: String(hr), selected: hr === draft.hour }, `${pad(hr)}:00`)));
+    hourSel.addEventListener('change', () => { draft.hour = Number(hourSel.value); });
+    const commit = async () => {
+      if (!draft.name.trim() || !draft.prompt.trim()) return toast('Give the prompt a name and say what Rook should do.', { error: true });
+      if (!draft.days.length) return toast('Pick at least one day.', { error: true });
+      if (!draft.id && list.length >= 12) return toast('Twelve prompts is the most Rook keeps. Remove one first.', { error: true });
+      const item = { ...draft, id: draft.id || 'p' + Date.now().toString(36) }, editing = !!draft.id;
+      draft = blank();
+      await savePrompts(editing ? list.map((p) => (p.id === item.id ? item : p)) : [...list, item], editing ? 'Prompt saved.' : 'Prompt added.');
+    };
+    const runNow = async (p, btn) => {
+      btn.disabled = true; toast(`Running “${p.name}” in the background…`);
+      try { const r = await VA.runPrompt(p.id); if (r && r.busy) toast(r.text); } finally { btn.disabled = false; }
+    };
+    promptHost.replaceChildren(
+      h('div', { cls: 'sp-line' }, h('span', { text: 'Your own prompts' })),
+      h('p', { cls: 'sp-help', text: 'Each one runs on its days at its hour, or as soon as Rook is running afterwards that day. Rook tells you when it is done and keeps the reply as a chat.' }),
+      list.length ? h('dl', { cls: 'keys' }, list.map((p) => {
+        const run = tool('play', `Run ${p.name} now`, () => runNow(p, run), { title: 'Run now' });
+        return h('div', null, h('dt', null, p.name, h('span', { cls: 'proj-path', text: `${when(p)} · ${p.prompt.length > 90 ? p.prompt.slice(0, 89) + '…' : p.prompt}` })),
+          h('dd', null, run,
+            tool('pen', `Change ${p.name}`, () => { draft = { ...p, days: [...p.days] }; paintPrompts(); promptHost.querySelector('.sp-input').focus(); }, { title: 'Change' }),
+            tool('trash', `Remove ${p.name}`, () => { if (draft.id === p.id) draft = blank(); savePrompts(list.filter((x) => x.id !== p.id), 'Prompt removed.'); }, { title: 'Remove' })));
+      })) : null,
+      h('div', { cls: 'prompt-form' }, pName, pText,
+        h('div', { cls: 'sp-line' }, dayBtns, h('div', { cls: 'sp-row' }, hourSel,
+          draft.id ? pill('pill-ghost', 'Cancel', () => { draft = blank(); paintPrompts(); }) : null,
+          pill('pill-ghost', draft.id ? 'Save' : 'Add', commit)))));
+  };
+  paintPrompts();
+
+  // Notifications
+  const notifyHost = h('div');
+  const paintNotify = () => notifyHost.replaceChildren(seg([['on', 'On'], ['off', 'Off']], S.cfg.notify === false ? 'off' : 'on',
+    async (v) => { await save({ notify: v === 'on' }, null); paintNotify(); }, 'Tell me when a reply is ready'));
+  paintNotify();
 
   // Voice
   const voiceHost = h('div', { cls: 'sp-stack' });
@@ -637,7 +699,7 @@ async function paintSettings() {
   };
   const paintKeys = () => keysHost.replaceChildren(shortcutRows(setKeys));
   paintKeys();
-  const secs = [['set-vault', 'Vault'], ['set-access', 'Access'], ['set-assistant', 'Assistant'], ['set-projects', 'Projects'], ['set-schedule', 'Scheduled notes'], ['set-voice', 'Voice'], ['set-look', 'Appearance'], ['set-startup', 'Startup'], ['set-keys', 'Keyboard shortcuts'], ['set-about', 'About']];
+  const secs = [['set-vault', 'Vault'], ['set-access', 'Access'], ['set-assistant', 'Assistant'], ['set-projects', 'Projects'], ['set-schedule', 'Scheduled notes'], ['set-notify', 'Notifications'], ['set-voice', 'Voice'], ['set-look', 'Appearance'], ['set-startup', 'Startup'], ['set-keys', 'Keyboard shortcuts'], ['set-about', 'About']];
   const nav = h('nav', { cls: 'settings-nav', 'aria-label': 'Settings categories' }, secs.map(([id, l], i) =>
     h('button', { type: 'button', cls: i ? '' : 'on', onClick: (e) => { nav.querySelectorAll('button').forEach((b) => b.classList.remove('on')); e.currentTarget.classList.add('on'); $(id).scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, l)));
   $('view-settings').replaceChildren(
@@ -656,7 +718,10 @@ async function paintSettings() {
         h('p', { cls: 'sp-help', text: 'Rook runs Claude Code in WSL. Sign in once with “claude auth login” (or make login).' }),
         h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Your name' })), name)),
       card('set-projects', 'Projects', projHost),
-      card('set-schedule', 'Scheduled notes', schedHost),
+      card('set-schedule', 'Scheduled notes', schedHost, h('hr', { cls: 'sp-rule' }), promptHost),
+      card('set-notify', 'Notifications',
+        h('div', { cls: 'sp-line' }, h('span', { text: 'Tell me when a reply is ready' }), notifyHost),
+        h('p', { cls: 'sp-help', text: 'A Windows notification when Rook finishes a reply while its window is in the tray, minimized or behind other apps. Click it to open Rook.' })),
       card('set-voice', 'Voice', voiceHost),
       card('set-look', 'Appearance', lookHost),
       card('set-startup', 'Startup',
@@ -724,8 +789,9 @@ function paintAsk() {
   $('send-slot').replaceChildren(sendBtn($('ask').value || (ATTACH.length ? '.' : ''), () => send($('ask').value)));
   $('ask-files').replaceChildren(...attachNodes());
   const ctx = S.view === 'notes' && S.pane === 'note' && S.note && S.noteCtx;
-  $('ask-ctx-slot').replaceChildren(...(ctx ? [h('span', { cls: 'ask-ctx' }, icon('file', 'sm'), h('span', { text: `About: ${S.note.title}` }),
-    h('button', { type: 'button', 'aria-label': 'Ask without this note', title: 'Ask without this note', onClick: () => { S.noteCtx = false; paintAsk(); } }, icon('x', 'sm')))] : []));
+  const dropLabel = S.noteSel ? 'Ask about the whole note' : 'Ask without this note';
+  $('ask-ctx-slot').replaceChildren(...(ctx ? [h('span', { cls: 'ask-ctx' }, icon('file', 'sm'), h('span', { text: `About: ${S.note.title}${S.noteSel ? ' · highlighted text' : ''}` }),
+    h('button', { type: 'button', 'aria-label': dropLabel, title: dropLabel, onClick: () => { if (S.noteSel) S.noteSel = ''; else S.noteCtx = false; paintAsk(); } }, icon('x', 'sm')))] : []));
   const agent = agentLabel();
   $('ask-hint').replaceChildren(S.cfg.readScope === 'vault' ? 'Reads only inside your vault · writes only inside your vault' : 'Reads anywhere on this PC · writes only inside your vault',
     ' · ', h('button', { type: 'button', cls: 'hint-btn', title: 'Choose the model and effort (or type /agent)', onClick: () => (popKind === 'agent' ? closePop() : openAgentPop()) }, agent || '/agent'));
@@ -752,7 +818,7 @@ function setMini(mode) {
 function toggleMini() { setMini(S.mini ? false : lastMini()); }
 
 // ---------- navigation ----------
-const NAV = [['home', 'Chat'], ['notes', 'Notes']];
+const NAV = [['home', 'Chat'], ['notes', 'Notes'], ['tasks', 'Tasks']];
 function go(view) {
   if (view !== S.view && S.view !== 'settings') S.prevView = S.view;
   S.view = view;
@@ -766,6 +832,7 @@ function paint() {
   if (el === 'view-home') paintHome();
   else if (el === 'view-chat') paintChat();
   else if (S.view === 'notes') { paintTree(); paintPane(); }
+  else if (S.view === 'tasks') paintTasks();
   else if (S.view === 'settings') paintSettings();
   paintAsk();
 }
@@ -788,6 +855,7 @@ const SHORTCUTS = [
   ['settings', 'Settings', 'Ctrl+,', () => go('settings')],
   ['chat', 'Go to Chat', 'Ctrl+1', () => go('home')],
   ['notes', 'Go to Notes', 'Ctrl+2', () => go('notes')],
+  ['tasks', 'Go to Tasks', 'Ctrl+3', () => go('tasks')],
   ['search', 'Search notes and chats', 'Ctrl+K', () => openPalette()],
   ['voice', 'Hold to talk', 'Alt+V', () => voiceHoldKey()],
   ['summon', 'Show or hide Rook, from any app', 'Ctrl+Alt+Space', () => {}], // these two are registered system-wide by the main process
@@ -868,6 +936,7 @@ function wire() {
   $('win-max').addEventListener('click', () => VA.win.maximize());
   $('win-close').addEventListener('click', () => VA.win.close());
 
+  for (const ev of ['mouseup', 'keyup']) $('reader').addEventListener(ev, captureNoteSel);
   const ask = $('ask');
   ask.addEventListener('input', () => { autogrow(); paintAsk(); updateSlash(ask.value); });
   ask.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!trySlash(ask.value)) send(ask.value); } });
@@ -905,7 +974,16 @@ function wire() {
   VA.voice.onProgress(onVoiceProgress);
   VOICE.status = await VA.voice.status().catch(() => VOICE.status);
   paintMic();
-  VA.onSchedule((ev) => { toast(`${ev.title}${ev.body ? ': ' + ev.body : ''}`); loadNotes(); });
+  VA.onSchedule((ev) => {
+    if (ev.chat) { // a scheduled prompt ran: keep its reply as a saved chat, which can be carried on from
+      const c = { id: 'c' + Date.now(), title: ev.chat.title, when: Date.now(), pinned: false, sessionId: ev.chat.sessionId || null,
+        msgs: [{ role: 'user', text: ev.chat.prompt, time: clock(), scheduled: true }, { role: 'bot', time: clock(), blocks: [{ t: 'text', text: ev.chat.text }], done: true }] };
+      S.chats.unshift(c); persist();
+      toast(`${ev.title}: the reply is in your chats.`, { action: 'Open', onAction: () => openChat(c) });
+      if (S.view === 'home' && !(S.cur && S.cur.msgs.length)) paintHome();
+    } else toast(`${ev.title}${ev.body ? ': ' + ev.body : ''}`);
+    loadNotes();
+  });
   S.chats = (await VA.loadChats()) || [];
   for (const c of S.chats) for (const m of c.msgs) if (m.role === 'bot' && !m.done) { m.done = true; m.stopped = true; }
   await loadNotes();

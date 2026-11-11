@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, screen, Tray, Menu, Notification, globalShortcut, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, screen, Tray, Menu, Notification, globalShortcut, nativeTheme, net } = require('electron');
 const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -6,6 +6,8 @@ const { buildPolicy, SYSTEM_PROMPT } = require('./policy');
 const { resolveInside } = require('./guard');
 const schedule = require('./schedule');
 const voiceEngine = require('./voice');
+const scan = require('./vaultscan');
+const clip = require('./clip');
 
 const DEFAULTS = {
   vaultWin: 'C:\\Users\\alijas\\Documents\\Vault',
@@ -13,28 +15,38 @@ const DEFAULTS = {
   readScope: 'machine', // 'machine' | 'vault'
   name: 'Ali',
   launchAtLogin: true, // start with Windows, quietly in the tray
+  notify: true,        // a Windows notification when a reply finishes while Rook is hidden or behind other apps
   keys: {},            // the user's changed shortcuts, { action: 'Ctrl+N' }; defaults live in the renderer
   theme: 'dark',       // 'dark' | 'light' | 'system'
   textSize: 'regular', // 'small' | 'regular' | 'large'
   model: '',           // '' lets the Claude CLI choose; otherwise one of MODELS
   effort: '',          // '' lets the CLI choose; otherwise one of EFFORTS
   projects: [],        // [{ name, path }] folders Rook should know by name (path as WSL sees it)
-  schedule: { dailyDays: [], weeklyDay: -1, weeklyHour: 16 } // days are 0 (Sunday) to 6; -1 turns the weekly review off
+  // days are 0 (Sunday) to 6; -1 turns the weekly review off; prompts are the user's own: [{ id, name, prompt, days, hour }]
+  schedule: { dailyDays: [], weeklyDay: -1, weeklyHour: 16, prompts: [] }
 };
 const MODELS = ['haiku', 'sonnet', 'opus', 'fable'];
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const SUMMON_DEFAULT = 'Ctrl+Alt+Space';
 const CAPTURE_DEFAULT = 'Ctrl+Alt+C';
-const KEY_ACTIONS = ['newChat', 'mini', 'settings', 'chat', 'notes', 'search', 'voice', 'summon', 'capture'];
+const KEY_ACTIONS = ['newChat', 'mini', 'settings', 'chat', 'notes', 'tasks', 'search', 'voice', 'summon', 'capture'];
 const oneOf = (v, list, fallback) => (list.includes(v) ? v : fallback);
 const cleanProjects = (list) => (Array.isArray(list) ? list : []).slice(0, 30)
   .map((p) => ({ name: String(p?.name || '').replace(/[\r\n"`]/g, ' ').trim().slice(0, 60), path: anyToWsl(String(p?.path || '').replace(/[\r\n"`]/g, '').trim()).slice(0, 300) }))
   .filter((p) => p.name && p.path.startsWith('/'));
+const cleanDays = (d) => (Array.isArray(d) ? [...new Set(d.filter((x) => Number.isInteger(x) && x >= 0 && x <= 6))].sort() : []);
 function cleanSchedule(x) {
-  const days = Array.isArray(x?.dailyDays) ? [...new Set(x.dailyDays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort() : [];
   const wd = Number.isInteger(x?.weeklyDay) && x.weeklyDay >= 0 && x.weeklyDay <= 6 ? x.weeklyDay : -1;
   const wh = Number.isInteger(x?.weeklyHour) && x.weeklyHour >= 0 && x.weeklyHour <= 23 ? x.weeklyHour : 16;
-  return { dailyDays: days, weeklyDay: wd, weeklyHour: wh };
+  const seen = new Set();
+  const prompts = (Array.isArray(x?.prompts) ? x.prompts : []).slice(0, 12).map((p) => ({
+    id: String(p?.id || '').replace(/[^\w-]/g, '').slice(0, 24),
+    name: String(p?.name || '').replace(/[\r\n"`]/g, ' ').trim().slice(0, 60),
+    prompt: String(p?.prompt || '').trim().slice(0, 4000),
+    days: cleanDays(p?.days),
+    hour: Number.isInteger(p?.hour) && p.hour >= 0 && p.hour <= 23 ? p.hour : 9
+  })).filter((p) => p.id && p.name && p.prompt && p.days.length && !seen.has(p.id) && seen.add(p.id));
+  return { dailyDays: cleanDays(x?.dailyDays), weeklyDay: wd, weeklyHour: wh, prompts };
 }
 const cleanKeys = (k) => Object.fromEntries(Object.entries(k && typeof k === 'object' ? k : {})
   .filter(([a, v]) => KEY_ACTIONS.includes(a) && typeof v === 'string' && /^((Ctrl|Alt|Shift|Win)\+)*[^+\s]{1,12}$/.test(v)));
@@ -87,20 +99,7 @@ const noteView = (f) => {
 };
 
 // ---- link graph + note reading (read-only) -------------------------------------------
-const baseKey = (rel) => rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/i, '').toLowerCase();
-function noteIndex(files) {
-  const byBase = new Map(), byPath = new Map();
-  for (const f of files) {
-    byPath.set(f.rel.replace(/\.md$/i, '').toLowerCase(), f.rel);
-    const k = baseKey(f.rel), cur = byBase.get(k);
-    if (!cur || f.rel.length < cur.length) byBase.set(k, f.rel); // shortest path wins, like Obsidian
-  }
-  return (name) => {
-    const n = String(name).split('#')[0].split('|')[0].trim().replace(/\\/g, '/').replace(/\.md$/i, '').toLowerCase();
-    if (!n) return null;
-    return byPath.get(n) || byBase.get(n.slice(n.lastIndexOf('/') + 1)) || null;
-  };
-}
+const { noteIndex } = scan; // how a [[link]] finds its note
 let graphCache = { sig: '', data: null };
 function buildGraph(root) {
   const files = walkVault(root);
@@ -157,7 +156,7 @@ function createWindow(show = true) {
     win.hide();
     if (!readJson(userFile('window.json'), {}).trayHintShown) {
       try {
-        new Notification({ title: 'Rook is still running', body: 'It stays in the tray by the clock. Right-click its icon to quit.' }).show();
+        notifyUser('Rook is still running', 'It stays in the tray by the clock. Right-click its icon to quit.');
         fs.writeFileSync(userFile('window.json'), JSON.stringify({ ...readJson(userFile('window.json'), {}), trayHintShown: true }));
       } catch { /* the hint is optional */ }
     }
@@ -172,6 +171,10 @@ function showWindow() {
   win.show(); win.focus();
 }
 function quitApp() { quitting = true; app.quit(); }
+// A Windows notification; clicking it opens Rook.
+function notifyUser(title, body) {
+  try { const n = new Notification({ title, body }); n.on('click', showWindow); n.show(); } catch { /* notifications are optional */ }
+}
 // The global shortcut works from any app: it brings Rook forward ready to type, or tucks it away again.
 const toAccel = (combo) => combo.split('+').map((p) => (p === 'Ctrl' ? 'Control' : p === 'Win' ? 'Super' : p.startsWith('Arrow') ? p.slice(5) : p)).join('+');
 function summon() {
@@ -199,7 +202,7 @@ function captureSelection() {
   const tell = (title, body) => {
     capturing = false;
     walkCache.at = 0;
-    try { new Notification({ title, body }).show(); } catch { /* optional */ }
+    notifyUser(title, body);
     if (win && !win.isDestroyed()) win.webContents.send('schedule:event', { title, body });
   };
   const file = (text, source) => {
@@ -251,6 +254,7 @@ ipcMain.handle('config:set', (_, c) => {
     readScope: c.readScope === 'vault' ? 'vault' : 'machine',
     name: typeof c.name === 'string' && c.name.trim() ? c.name.trim().slice(0, 40) : cur.name,
     launchAtLogin: typeof c.launchAtLogin === 'boolean' ? c.launchAtLogin : cur.launchAtLogin,
+    notify: typeof c.notify === 'boolean' ? c.notify : cur.notify,
     keys: cleanKeys(c.keys),
     theme: oneOf(c.theme, ['dark', 'light', 'system'], cur.theme),
     textSize: oneOf(c.textSize, ['small', 'regular', 'large'], cur.textSize),
@@ -398,6 +402,79 @@ ipcMain.on('voice:start', () => {
 });
 
 ipcMain.handle('schedule:runWeekly', () => scheduler && scheduler.runWeeklyNow());
+ipcMain.handle('schedule:runPrompt', (_, id) => (scheduler ? scheduler.runPromptNow(String(id)) : { ok: false, text: 'The scheduler is not running.' }));
+
+// ---- tasks: every "- [ ]" line in the vault, and ticking one off ------------------------
+const readNoteText = (root, rel) => { try { const abs = path.join(root, rel); return fs.statSync(abs).size > 1024 * 1024 ? null : fs.readFileSync(abs, 'utf8'); } catch { return null; } };
+ipcMain.handle('tasks:list', () => {
+  const root = loadCfg().vaultWin, out = [];
+  let count = 0;
+  for (const f of walkVault(root)) {
+    if (scan.inTemplates(f.rel) || count >= 3000) continue; // a template's checkboxes are not things to do
+    const text = readNoteText(root, f.rel);
+    if (text == null || !text.includes('[ ]')) continue;
+    const tasks = scan.tasksIn(text).filter((t) => !t.done);
+    if (tasks.length) { out.push({ ...noteView(f), tasks }); count += tasks.length; }
+  }
+  return out;
+});
+ipcMain.handle('tasks:set', (_, t) => {
+  const cfg = loadCfg();
+  if (!/\.md$/i.test(String(t?.file)) || !Number.isInteger(t?.line) || typeof t?.text !== 'string') return { ok: false };
+  const abs = resolveInside(cfg.vaultWin, String(t.file)); // guard: refuses anything outside the vault
+  const next = scan.setTask(fs.readFileSync(abs, 'utf8'), { line: t.line, text: t.text, done: !!t.done });
+  if (!next) return { ok: false }; // the note changed and that task is no longer there
+  fs.writeFileSync(abs, next.content);
+  walkCache.at = 0;
+  return { ok: true, line: next.line };
+});
+
+// ---- health check: broken links, empty notes, notes nothing links to, repeated names ----
+function otherFiles(root) {
+  const out = [], stack = [''];
+  while (stack.length && out.length < 50000) {
+    const rel = stack.pop();
+    let entries;
+    try { entries = fs.readdirSync(path.join(root, rel), { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) stack.push(r);
+      else if (e.isFile() && !e.name.toLowerCase().endsWith('.md')) out.push(r);
+    }
+  }
+  return out;
+}
+ipcMain.handle('vault:health', () => {
+  const root = loadCfg().vaultWin;
+  walkCache.at = 0;
+  const notes = walkVault(root).map((f) => ({ rel: f.rel, text: readNoteText(root, f.rel) })).filter((n) => n.text != null);
+  return scan.health(notes, otherFiles(root));
+});
+// An empty note goes to the Recycle Bin. It is read again first: a note that has gained text since the check stays.
+ipcMain.handle('health:trash', async (_, rel) => {
+  if (!/\.md$/i.test(String(rel))) return false;
+  const abs = resolveInside(loadCfg().vaultWin, String(rel));
+  if (!scan.isEmptyNote(String(rel).replace(/\\/g, '/'), fs.readFileSync(abs, 'utf8'))) return false;
+  await shell.trashItem(abs);
+  walkCache.at = 0;
+  return true;
+});
+// Creates the note a broken link points to. Undo goes through note:undoCreate.
+ipcMain.handle('health:create', (_, { from, target }) => {
+  const cfg = loadCfg();
+  const rel = scan.linkNotePath(String(from || ''), String(target || ''));
+  if (!rel) throw new Error('That link cannot be a file name.');
+  const abs = resolveInside(cfg.vaultWin, rel); // guard: refuses anything outside the vault
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, `# ${path.basename(rel, '.md')}\n\n`, { flag: 'wx' });
+  createdByApp.add(rel);
+  walkCache.at = 0;
+  return rel;
+});
+
+// ---- web clipping: Rook fetches the page; the agent only ever sees its text ------------
+ipcMain.handle('clip:fetch', (_, url) => clip.fetchPage(url, (u, o) => net.fetch(u, o)));
 
 ipcMain.handle('chats:load', () => readJson(userFile('chats.json'), []));
 ipcMain.handle('chats:save', (_, chats) => {
@@ -463,7 +540,7 @@ ipcMain.on('win:mini', (_, mode) => {
 });
 
 // ---- chat: Claude Code CLI inside WSL ----------------------------------------------
-ipcMain.on('chat:cancel', () => child && child.kill());
+ipcMain.on('chat:cancel', () => { if (child) { child.cancelled = true; child.kill(); } });
 // The command line for one agent run, shared by chats and scheduled tasks.
 function agentArgs(cfg, outputFlags) {
   const vaultWsl = toWsl(cfg.vaultWin);
@@ -523,17 +600,28 @@ ipcMain.handle('change:revert', async (_, { id, rel, created }) => {
   return true;
 });
 
+// When a reply finishes and nobody is looking (Rook is in the tray, minimized, or behind other apps), say so.
+function tellReplyDone(code, reply) {
+  if (!loadCfg().notify || !win || win.isDestroyed()) return;
+  const away = !win.isVisible() || win.isMinimized() || (!win.isFocused() && miniMode !== 'panel'); // the side chat stays on top, so it is seen
+  if (!away) return;
+  if (code) return notifyUser('Rook could not finish', 'Open Rook to see what went wrong.');
+  const asks = reply.includes('<choices>');
+  const text = reply.split('<choices>')[0].replace(/\[\[([^\]|]*\|)?([^\]]*)\]\]/g, '$2').replace(/[#*`>_]/g, '').replace(/\s+/g, ' ').trim();
+  notifyUser(asks ? 'Rook has a question for you' : 'Rook has replied', text.length > 180 ? text.slice(0, 179) + '…' : text || 'The reply is ready.');
+}
+
 ipcMain.on('chat:send', (e, { prompt, sessionId }) => {
   const cfg = loadCfg();
   const emit = (ev) => { if (!sender(e).isDestroyed()) sender(e).send('chat:event', ev); };
   const args = agentArgs(cfg, ['--output-format', 'stream-json', '--verbose', '--include-partial-messages']);
   if (sessionId) args.push('--resume', sessionId);
 
-  child = spawn('wsl.exe', args, { windowsHide: true });
-  child.stdin.end(prompt); // prompt via stdin avoids quoting problems
+  const proc = child = spawn('wsl.exe', args, { windowsHide: true });
+  proc.stdin.end(prompt); // prompt via stdin avoids quoting problems
 
-  let buf = '';
-  child.stdout.on('data', (d) => {
+  let buf = '', reply = '';
+  proc.stdout.on('data', (d) => {
     buf += d.toString('utf8');
     let i;
     while ((i = buf.indexOf('\n')) >= 0) {
@@ -541,6 +629,7 @@ ipcMain.on('chat:send', (e, { prompt, sessionId }) => {
       if (!line) continue;
       let ev;
       try { ev = JSON.parse(line); } catch { continue; }
+      if (ev.type === 'result' && typeof ev.result === 'string') reply = ev.result;
       // Tell the UI whether a Write targets an existing note (Edited vs Created).
       if (ev.type === 'assistant') {
         for (const b of ev.message?.content || []) {
@@ -555,9 +644,12 @@ ipcMain.on('chat:send', (e, { prompt, sessionId }) => {
     }
   });
   let err = '';
-  child.stderr.on('data', (d) => { err += d.toString('utf8'); });
-  child.on('error', (er) => emit({ type: 'done', code: -1, stderr: String(er) }));
-  child.on('close', (code) => emit({ type: 'done', code, stderr: code ? err.trim() : '' }));
+  proc.stderr.on('data', (d) => { err += d.toString('utf8'); });
+  proc.on('error', (er) => emit({ type: 'done', code: -1, stderr: String(er) }));
+  proc.on('close', (code) => {
+    emit({ type: 'done', code, stderr: code ? err.trim() : '' });
+    if (!proc.cancelled) tellReplyDone(code, reply);
+  });
 });
 
 // One-time carry-over of settings and saved chats from the app's old name ("Vault Assistant").
@@ -643,16 +735,16 @@ app.whenReady().then(() => {
       c.on('error', () => { clearTimeout(timer); resolve({ ok: false, text: 'Could not start Claude.' }); });
       c.on('close', (code) => {
         clearTimeout(timer);
-        let text = '';
-        try { text = JSON.parse(out).result || ''; } catch { /* not JSON: failed early */ }
-        resolve({ ok: code === 0 && !!text, text });
+        let text = '', sessionId = null;
+        try { const r = JSON.parse(out); text = r.result || ''; sessionId = r.session_id || null; } catch { /* not JSON: failed early */ }
+        resolve({ ok: code === 0 && !!text, text, sessionId });
       });
       c.stdin.end(prompt);
     }),
-    notify: (title, body) => {
+    notify: (title, body, extra) => {
       walkCache.at = 0;
-      try { new Notification({ title, body }).show(); } catch { /* optional */ }
-      if (win && !win.isDestroyed()) win.webContents.send('schedule:event', { title, body });
+      notifyUser(title, body);
+      if (win && !win.isDestroyed()) win.webContents.send('schedule:event', { title, body, ...(extra || {}) });
     }
   });
   createWindow(!(tray && process.argv.includes('--hidden')));

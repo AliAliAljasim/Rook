@@ -37,3 +37,18 @@ test('a captured snippet becomes a line, or a quoted block when it is long or mu
   assert.equal(captureEntry('one\r\ntwo', 'Mail', at), '- 09:05 — *from Mail*\n  > one\n  > two\n');
   assert.equal(captureEntry('x', '', at), '- 09:05 x\n');
 });
+
+test('one of the user\'s own prompts is due on its days from its hour, until it has run that day', () => {
+  const { promptDue, customPrompt } = require('../src/schedule');
+  const task = { id: 'p1', name: 'Morning brief', prompt: 'List what is open.', days: [1, 3], hour: 9 };
+  const wed = (h) => new Date(2026, 10, 11, h); // Wednesday
+  assert.equal(promptDue(wed(8), task, undefined), false);        // before its hour
+  assert.equal(promptDue(wed(9), task, undefined), true);
+  assert.equal(promptDue(wed(17), task, '2026-11-09'), true);     // PC was off at nine: still due later that day
+  assert.equal(promptDue(wed(17), task, '2026-11-11'), false);    // already ran today
+  assert.equal(promptDue(new Date(2026, 10, 12, 12), task, undefined), false); // Thursday is not one of its days
+  const p = customPrompt(task, wed(9));
+  assert.match(p, /do not ask questions/);
+  assert.match(p, /Wednesday 2026-11-11/);
+  assert.match(p, /"Morning brief":\nList what is open\.$/);
+});

@@ -2,6 +2,8 @@
 //   - Daily note: created (from Templates/daily.md when there is one) on the weekdays the user picked.
 //   - Weekly review: written by the agent once a week, on the chosen day and hour; if the PC was off
 //     at that moment it is written the next time Rook is running that week.
+//   - The user's own prompts: each runs once on its days, at its hour or as soon as Rook is running
+//     afterwards that day. The reply is handed to the window, which keeps it as a saved chat.
 const fs = require('fs');
 const path = require('path');
 
@@ -38,6 +40,22 @@ function weeklyPrompt(now) {
     'Cover: what got done, decisions made, what is still open, and what to pick up next week. Keep it tight and link the source notes with [[wiki-links]].',
     'If nothing changed this week, write a two-line review saying so.',
     'Reply with one line naming the note you wrote.'
+  ].join('\n');
+}
+
+// One of the user's own prompts is due on its days once its hour has come, until it has run that day.
+function promptDue(now, task, lastRun) {
+  return task.days.includes(now.getDay()) && now.getHours() >= task.hour && lastRun !== ymd(now);
+}
+function customPrompt(task, now) {
+  return [
+    'This is a scheduled task the user set up. Nobody is at the keyboard, so do not ask questions and do not offer choices: decide and act.',
+    `Today is ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][now.getDay()]} ${ymd(now)}.`,
+    'If the task produces something worth keeping and does not say where it goes, put it in the note that fits best (today\'s daily note when nothing else does).',
+    'Reply with the result itself, kept short, and name any note you wrote or changed as a [[link]].',
+    '',
+    `The task, "${task.name}":`,
+    task.prompt
   ].join('\n');
 }
 
@@ -93,6 +111,25 @@ function start({ loadCfg, userFile, readJson, resolveInside, runAgent, notify })
     } finally { running = false; }
   }
 
+  // Runs one of the user's prompts. A scheduled run is recorded for the day whether or not it worked,
+  // so a failing prompt is tried again tomorrow rather than every few minutes.
+  async function runPrompt(task, now, manual) {
+    if (running) return { ok: false, busy: true, text: 'Another scheduled task is running. Try again when it has finished.' };
+    running = true;
+    try {
+      const r = await runAgent(customPrompt(task, now));
+      if (!manual) {
+        const ids = new Set((loadCfg().schedule.prompts || []).map((t) => t.id)); // forget prompts that were removed
+        const kept = Object.fromEntries(Object.entries(state().prompts || {}).filter(([id]) => ids.has(id)));
+        save({ prompts: { ...kept, [task.id]: ymd(now) } });
+      }
+      const line = (r.text || '').split('\n').find((l) => l.trim()) || '';
+      if (r.ok) notify(task.name, line.replace(/[#*`\[\]]/g, '').trim().slice(0, 160), { chat: { title: task.name, prompt: task.prompt, text: r.text, sessionId: r.sessionId || null } });
+      else notify(`“${task.name}” could not run`, r.text.slice(0, 160) || 'Claude did not finish. Check that it is signed in inside WSL.');
+      return r;
+    } finally { running = false; }
+  }
+
   function tick() {
     const cfg = loadCfg(), now = new Date();
     try { dailyNote(cfg, now); } catch { /* vault unavailable right now */ }
@@ -100,11 +137,20 @@ function start({ loadCfg, userFile, readJson, resolveInside, runAgent, notify })
     if (weeklyDue(now, cfg.schedule.weeklyDay, cfg.schedule.weeklyHour) && st.weekly !== isoWeek(now).key && st.weeklyFailedOn !== ymd(now)) {
       weeklyReview(now, false).catch(() => {});
     }
+    // One at a time. A prompt that finds another task running is left for the next tick.
+    const due = (cfg.schedule.prompts || []).filter((t) => promptDue(now, t, (st.prompts || {})[t.id]));
+    if (due.length && !running) (async () => { for (const t of due) await runPrompt(t, new Date(), false); })().catch(() => {});
   }
 
   setTimeout(tick, 45e3);        // shortly after launch
   setInterval(tick, 5 * 60e3);   // then every five minutes
-  return { runWeeklyNow: () => weeklyReview(new Date(), true) };
+  return {
+    runWeeklyNow: () => weeklyReview(new Date(), true),
+    runPromptNow: (id) => {
+      const task = (loadCfg().schedule.prompts || []).find((t) => t.id === id);
+      return task ? runPrompt(task, new Date(), true) : { ok: false, text: 'That prompt is no longer in Settings.' };
+    }
+  };
 }
 
-module.exports = { start, isoWeek, weeklyDue, weeklyPrompt, ensureDaily, captureEntry };
+module.exports = { start, isoWeek, weeklyDue, weeklyPrompt, promptDue, customPrompt, ensureDaily, captureEntry };

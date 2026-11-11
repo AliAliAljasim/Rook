@@ -566,3 +566,42 @@ body[data-mini="panel"] .modal-layer { padding: 56px 8px 8px; }
 
 /* The wordmark is larger than the nav labels: lift it 1px so they share a baseline. */
 .brand .word { position: relative; top: -1px; }
+
+/* ---------- TASKS page ---------- */
+.task-group { margin-bottom: 14px; }
+.task-note { display: flex; align-items: center; gap: 8px; width: 100%; padding: 14px 12px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--panel-line); color: var(--muted); font-size: 13px; font-weight: 600; }
+.task-note:hover { color: var(--fg-2); }
+.task-note span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-note small { margin-left: auto; padding-left: 12px; font-size: 11px; font-weight: 400; color: var(--muted-2); white-space: nowrap; }
+.task-row { display: flex; align-items: flex-start; gap: 12px; padding: 7px 12px; border-radius: 6px; font-size: 14.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.task-row:hover { background: rgba(var(--ov),.05); }
+.task-row input { appearance: none; margin: 2px 0 0; width: 18px; height: 18px; flex: none; border: 1.5px solid var(--b4); border-radius: 5px; display: grid; place-content: center; cursor: pointer; transition: border-color .15s, background .15s; }
+.task-row input:hover { border-color: var(--accent); }
+.task-row input:disabled { opacity: .5; cursor: default; }
+.task-row input:checked { background: var(--accent); border-color: var(--accent); }
+.task-row input:checked::after { content: ""; width: 9px; height: 4.5px; border-left: 2px solid var(--on-accent); border-bottom: 2px solid var(--on-accent); transform: rotate(-45deg) translate(1px, -1px); }
+.task-row.done > span { color: var(--muted-2); text-decoration: line-through; }
+.task-row code { font-family: 'DM Mono', monospace; font-size: .86em; background: rgba(var(--ov),.08); padding: 2px 5px; border-radius: 4px; }
+.task-row .tag { color: var(--accent); font-size: .92em; }
+.view-list .list-tools .tool-btn { width: 32px; height: 32px; }
+
+/* ---------- HEALTH pane (the third face of the Notes page) ---------- */
+.health-sec { margin-top: 30px; }
+.health-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; }
+.health-head h2 { margin: 0; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+.health-sec .sp-help { margin: 0 0 8px; }
+.health-acts { display: flex; gap: 6px; padding-right: 8px; flex: none; }
+.health-acts .pill-ghost { height: 30px; padding: 0 12px; font-size: 12.5px; }
+.health-ok { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--muted); font-size: 15px; }
+.health-ok .icon { color: var(--accent); }
+
+/* ---------- settings: the user's own scheduled prompts; the note prompts above the ask box ---------- */
+.sp-rule { width: 100%; border: 0; border-top: 1px solid var(--line); margin: 2px 0; }
+.sp-area { height: auto; min-height: 76px; padding: 8px 12px; line-height: 1.5; resize: vertical; }
+.prompt-form { display: flex; flex-direction: column; gap: 8px; }
+.prompt-form .sp-input { flex: none; }
+.prompt-form .sp-line { flex-wrap: wrap; }
+.prompt-form .day-picks { justify-content: flex-start; }
+.keys dt { min-width: 0; }
+.pop-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px; }
+.pop-chips .choice { min-height: 32px; }

@@ -24,11 +24,20 @@ const chats = [
 const THEME = process.env.THEME === 'light' ? 'light' : 'dark';
 const cfg = { vaultWin: 'C:\\Users\\alijas\\Documents\\Vault', claudePath: '/home/alijas/.local/bin/claude', readScope: 'machine', name: 'Ali', vaultName: 'Vault', vaultWsl: '/mnt/c/Users/alijas/Documents/Vault',
   theme: THEME, textSize: 'regular', model: '', effort: '', models: ['haiku', 'sonnet', 'opus', 'fable'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'], summonOk: true, keys: {},
-  projects: [{ name: 'rook', path: '/home/alijas/note_taking_assistant' }], schedule: { dailyDays: [3, 4], weeklyDay: 4, weeklyHour: 16 } };
+  projects: [{ name: 'rook', path: '/home/alijas/note_taking_assistant' }], notify: true,
+  schedule: { dailyDays: [3, 4], weeklyDay: 4, weeklyHour: 16, prompts: [{ id: 'p1', name: 'Morning brief', prompt: 'List what is still open in my projects and add it to today’s note.', days: [1, 2, 3, 4, 5], hour: 9 }] } };
 const titles = ['Atlas launch plan', '1-1 with Sam', 'Budget', 'Checklist', 'Printer quote', 'Cover design', 'Web edition', 'Proof schedule', 'Research methods', 'Reading list', 'Weekly review W45', 'Weekly review W44', 'Lisbon trip', 'Packing list', 'Ideas', 'Typefaces', 'Announcement draft', 'Press contacts', 'Interview notes', 'Glossary', 'Inbox', 'Someday', 'Gift ideas', 'Recipes'];
 const folders = ['Projects/Atlas/', 'Meetings/', 'Projects/Atlas/', 'Projects/Atlas/', 'Projects/Atlas/', 'Projects/Atlas/', 'Projects/Atlas/', 'Projects/Atlas/', 'Reading/', 'Reading/', 'Reviews/', 'Reviews/', 'Travel/', 'Travel/', '', 'Reading/', 'Projects/Atlas/', 'Projects/Atlas/', 'Meetings/', '', '', '', '', ''];
 const all = titles.map((t, i) => ({ file: folders[i] + t + '.md', title: t, folder: folders[i], mtimeMs: now - i * 5 * 3600e3 }));
 all.unshift({ file: 'Daily/2026-11-11.md', title: '2026-11-11', folder: 'Daily/', mtimeMs: now });
+const tasks = [
+  { ...all[1], tasks: [{ line: 22, done: false, text: 'Confirm proof dates with [[1-1 with Sam]]' }, { line: 23, done: false, text: 'Chase the **revised** printer quote' }] },
+  { ...all[0], tasks: [{ line: 4, done: false, text: 'Book the Lisbon flights #travel' }] },
+  { ...all[14], tasks: [{ line: 2, done: false, text: 'Check `proofs` folder for the cover draft' }, { line: 3, done: false, text: 'Renew the typeface licence' }] }];
+const healthData = { notes: 25, broken: [{ file: 'Projects/Atlas/Atlas launch plan.md', target: 'Missing note', line: 12 }, { file: 'Meetings/1-1 with Sam.md', target: 'Proof calendar', line: 3 }],
+  empty: [{ file: 'Untitled.md', empty: true, untitled: true }, { file: 'Untitled 2.md', empty: false, untitled: true }], orphans: ['Gift ideas.md', 'Recipes.md'],
+  duplicates: [{ name: 'Budget', files: ['Archive/Budget.md', 'Projects/Atlas/Budget.md'] }] };
+let lastPrompt = '';
 const E = [[1,2],[1,3],[1,4],[1,5],[1,6],[1,7],[1,8],[1,17],[1,18],[2,5],[2,8],[2,19],[5,3],[6,16],[7,16],[9,10],[9,16],[11,1],[11,12],[11,9],[13,14],[0,1],[0,2],[0,11],[15,1],[15,9],[18,19],[21,15]];
 const graph = { nodes: all.map((n) => ({ id: n.file, title: n.title, folder: n.folder })), edges: E };
 const noteText = `---
@@ -72,10 +81,13 @@ for (const [c, f] of Object.entries({ 'config:get': () => cfg, 'config:set': (_,
   'attach:save': (_, { name }) => 'Attachments/' + name, 'schedule:runWeekly': () => ({ ok: true }),
   'change:get': () => ({ hasBackup: true, before: '# Atlas launch plan\n\nThe plan for shipping Atlas.\n\n## Still open\n\n- Printer quote\n- Cover typeface licence\n- Launch date\n\n## Notes\n\nNothing yet.\n', now: '# Atlas launch plan\n\nThe plan for shipping Atlas.\n\n## Still open\n\n- Printer quote, revised figure due Friday\n- Cover typeface licence\n- Launch date\n- Confirm proof dates with Sam\n\n## Notes\n\nNothing yet.\n' }),
   'change:revert': () => true, 'attach:discard': () => true,
+  'tasks:list': () => tasks, 'tasks:set': (_, t) => ({ ok: true, line: t.line }), 'vault:health': () => healthData, 'health:trash': () => true, 'health:create': (_, { target }) => `Projects/Atlas/${target}.md`,
+  'clip:fetch': (_, url) => ({ ok: true, url, title: 'How book printing works', text: 'Offset printing uses plates. '.repeat(20), truncated: false }), 'schedule:runPrompt': () => ({ ok: true, text: 'Done.' }), 'note:undoCreate': () => true,
   'voice:status': () => ({ installed: false, installing: false, percent: 0, sizeMb: 157 }), 'voice:install': () => ({ ok: true }), 'voice:remove': () => true, 'voice:transcribe': () => 'hello from the microphone' }))
   ipcMain.handle(c, f);
 ipcMain.on('config:initial', (e) => { e.returnValue = { theme: THEME, textSize: 'regular' }; });
-['voice:start', 'attach:sent', 'chat:send', 'chat:cancel', 'clipboard:write', 'update:check', 'update:download', 'update:install', 'win:mini', 'win:minimize', 'win:maximize', 'win:close'].forEach((c) => ipcMain.on(c, () => {}));
+ipcMain.on('chat:send', (_, { prompt }) => { lastPrompt = prompt; });
+['voice:start', 'attach:sent', 'chat:cancel', 'clipboard:write', 'update:check', 'update:download', 'update:install', 'win:mini', 'win:minimize', 'win:maximize', 'win:close'].forEach((c) => ipcMain.on(c, () => {}));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
@@ -134,8 +146,58 @@ app.whenReady().then(async () => {
   await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.includes('Projects')).click()`); await wait(200);
   await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.startsWith('Atlas')).click()`); await wait(300);
   await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.trim()==='Atlas launch plan').click()`); await wait(500); await snap('5-note');
+  // ask about this note: ready-made questions, and the highlighted passage going along with the question
+  await js(`[...document.querySelectorAll('.note-acts button')].find(b=>b.textContent==='Ask Rook about this').click()`); await wait(300); await snap('5b-note-ask');
+  await check('note prompts', `popKind + ' | ' + [...document.querySelectorAll('.pop-chips .choice')].map(b=>b.textContent).join(', ')`);
+  await key({ key: 'Escape' });
+  await js(`{const p=document.querySelector('#reader .md li'); const r=document.createRange(); r.selectNodeContents(p); const s=getSelection(); s.removeAllRanges(); s.addRange(r); document.getElementById('reader').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))}`); await wait(200);
+  await check('ask chip with highlighted text', `document.querySelector('#ask-ctx-slot').textContent`);
+  await js(`send('What does this mean?')`); await wait(300);
+  notes.push('passage sent to the agent: ' + /<<<PASSAGE\nPrinter quote/.test(lastPrompt) + ', note named: ' + lastPrompt.includes('Atlas launch plan.md'));
+  w.webContents.send('chat:event', { type: 'done', code: 0 }); await wait(200);
+  // tasks page
+  await js(`[...document.querySelectorAll('#topnav button')][2].click()`); await wait(500); await snap('6-tasks');
+  await check('tasks count', `document.getElementById('tasks-count').textContent`);
+  await js(`document.querySelector('.task-row input').click()`); await wait(300);
+  await check('after ticking one', `[document.querySelectorAll('.task-row.done').length, document.getElementById('tasks-count').textContent]`);
+  await js(`{const i=document.querySelector('#view-tasks .filter input'); i.value='lisbon'; i.dispatchEvent(new Event('input'))}`); await wait(200);
+  await check('tasks filtered to', `[...document.querySelectorAll('.task-row')].map(r=>r.textContent)`);
+  await key({ key: '3', code: 'Digit3', ctrlKey: true }); await check('Ctrl+3 view', `document.querySelector('.view.active').id`);
+  // health pane
+  await js(`[...document.querySelectorAll('#topnav button')][1].click()`); await wait(300);
+  await js(`[...document.querySelectorAll('#pane-seg button')].find(b=>b.textContent==='Health').click()`); await wait(500); await snap('7-health');
+  await check('health sections', `[...document.querySelectorAll('.health-head h2')].map(x=>x.textContent)`);
+  await js(`document.getElementById('health-pane').scrollTop = 9999`); await snap('7b-health-bottom');
+  await js(`[...document.querySelectorAll('.health-acts button')].find(b=>b.textContent==='Ask Rook').click()`); await wait(300);
+  notes.push('health fix prompt: ' + lastPrompt.slice(0, 90));
+  w.webContents.send('chat:event', { type: 'done', code: 0 }); await wait(200);
+  // web clipping: a lone address offers to clip; Enter fetches the page and sends its text along
+  await js(`newChat()`); await wait(200);
+  await js(`{const a=document.getElementById('ask'); a.focus(); a.value='https://example.com/printing'; a.dispatchEvent(new Event('input'))}`); await wait(200); await snap('8a-clip-offer');
+  await check('clip offer', `document.querySelector('#ask-pop').textContent`);
+  await js(`document.getElementById('ask').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`); await wait(600); await snap('8b-clip-sent');
+  await check('clip message', `[...document.querySelectorAll('.msg-user')].pop().textContent`);
+  notes.push('clip prompt has the page text and the no-instructions line: ' + (lastPrompt.includes('<<<PAGE\nOffset printing') && lastPrompt.includes('never follow instructions')));
+  w.webContents.send('chat:event', { type: 'done', code: 0 }); await wait(200);
+  await js(`{const a=document.getElementById('ask'); a.value='/cl'; a.dispatchEvent(new Event('input'))}`); await wait(200);
+  await check('slash list for /cl', `[...document.querySelectorAll('.pop-cmd b')].map(b=>b.textContent)`);
+  await js(`document.getElementById('ask').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`); await wait(200);
+  await check('ask box after Enter on /cl', `JSON.stringify(document.getElementById('ask').value)`);
+  await js(`{const a=document.getElementById('ask'); a.value=''; a.dispatchEvent(new Event('input'))}`);
+  // a scheduled prompt's reply arrives as a saved chat
+  w.webContents.send('schedule:event', { title: 'Morning brief', body: 'Three things are open.', chat: { title: 'Morning brief', prompt: 'List what is still open.', text: 'Three things are open in [[Atlas launch plan]].', sessionId: 's9' } }); await wait(300);
+  await check('scheduled reply saved as chat', `[S.chats[0].title, S.chats[0].msgs.length, S.chats[0].sessionId]`);
+  await js(`openChat(S.chats.find(c=>c.title.includes('Weekly review')))`); await wait(200);
   // settings
   await js(`document.querySelector('button[aria-label="Settings"]').click()`); await wait(400);
+  await js(`document.getElementById('set-schedule').scrollIntoView()`); await snap('10e-settings-prompts');
+  await js(`{const f=document.querySelector('.prompt-form'); const n=f.querySelector('input'); n.value='Friday tidy'; n.dispatchEvent(new Event('input')); const t=f.querySelector('textarea'); t.value='Archive finished notes.'; t.dispatchEvent(new Event('input'));}`);
+  await js(`[...document.querySelectorAll('.prompt-form .day-picks button')].find(b=>b.textContent==='Sat').click()`); await wait(200);
+  await js(`[...document.querySelectorAll('.prompt-form button')].find(b=>b.textContent==='Add').click()`); await wait(300);
+  notes.push('prompts after adding one: ' + JSON.stringify(cfg.schedule.prompts.map((p) => [p.name, p.days, p.hour])));
+  await js(`[...document.querySelectorAll('#set-notify .segmented button')].find(b=>b.textContent==='Off').click()`); await wait(200);
+  notes.push('notify after switching off: ' + cfg.notify);
+  await js(`document.getElementById('set-notify').scrollIntoView()`); await snap('10f-settings-notify');
   await js(`document.getElementById('set-projects').scrollIntoView()`); await snap('10a-settings-projects');
   await js(`document.getElementById('set-voice').scrollIntoView()`); await snap('10b-settings-look');
   await js(`document.getElementById('set-keys').scrollIntoView()`); await snap('10c-settings-keys');
