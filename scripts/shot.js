@@ -61,7 +61,7 @@ The plan for shipping **Atlas**. Decided with [[1-1 with Sam]]: print first, the
 ![[cover-draft.png]]
 `;
 for (const [c, f] of Object.entries({ 'config:get': () => cfg, 'config:set': (_, x) => ({ ...cfg, ...x }), 'vault:recent': () => all.slice(0, 4), 'vault:list': () => all.slice().sort((a, b) => a.file.localeCompare(b.file)),
-  'vault:search': (_, q) => all.filter((n) => n.file.toLowerCase().includes(String(q).toLowerCase())).slice(0, 8), 'vault:graph': () => graph,
+  'vault:graph': () => graph,
   'note:resolve': (_, name) => (all.find((n) => n.title.toLowerCase() === String(name).toLowerCase()) || {}).file || null,
   'note:read': (_, rel) => ({ file: rel, content: rel.includes('Atlas launch') ? noteText : '# ' + rel + '\n\nA short note that links to [[Atlas launch plan]].', mtimeMs: now - 2 * 3600e3 }),
   'vault:info': () => ({ ok: true, notes: 1284, folders: 96 }), 'chats:load': () => chats, 'chats:save': () => true, 'note:open': () => true, 'app:version': () => '0.2.0', 'update:get': () => ({ state: 'current' }) }))
@@ -90,8 +90,7 @@ app.whenReady().then(async () => {
   await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.startsWith('Atlas')).click()`); await wait(300);
   await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.trim()==='Atlas launch plan').click()`); await wait(500); await shot('5-note');
   await js(`[...document.querySelectorAll('.note-acts button')].find(b=>b.textContent.includes('Show on map')).click()`); await wait(1500); await shot('6-show-on-map');
-  await js(`{const i=document.getElementById('search-input'); i.value='atlas'; i.dispatchEvent(new Event('input'))}`); await wait(400); await shot('9-search');
-  await js(`{const i=document.getElementById('search-input'); i.value=''; i.dispatchEvent(new Event('input')); document.querySelector('button[aria-label="Settings"]').click()}`); await wait(400); await js(`document.getElementById('scroller').scrollTop = 99999`); await shot('10-settings');
+  await js(`document.querySelector('button[aria-label="Settings"]').click()`); await wait(400); await js(`document.getElementById('scroller').scrollTop = 99999`); await shot('10-settings');
   await js(`[...document.querySelectorAll('#topnav button')][0].click()`);
   await js(`document.querySelector('#topbar-tools button[aria-label="Side chat"]').click()`);
   w.setMinimumSize(340, 420); w.setSize(400, 720); await wait(300); await shot('12-panel-chat');

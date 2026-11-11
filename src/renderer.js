@@ -24,7 +24,7 @@ const S = {
   view: 'home', prevView: 'home', streaming: false, mini: false,
   note: null, noteCtx: true, pane: 'map', treeOpen: new Set(), treeFilter: '',
   graph: null, graphStale: true, map: null, mapSel: null, mapFilter: '',
-  chatFilter: '', chatTab: 'all', renaming: null, query: '', version: '', update: { state: 'idle' }
+  chatFilter: '', chatTab: 'all', renaming: null, version: '', update: { state: 'idle' }
 };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -91,7 +91,6 @@ async function openNote(nameOrFile) {
     S.noteCtx = true;
     let acc = '';
     for (const part of S.note.folder.split('/').filter(Boolean)) { acc += part + '/'; S.treeOpen.add(acc); }
-    if ($('search-input').value) { $('search-input').value = ''; S.query = ''; }
     S.pane = 'note';
     go('notes');
     $('reader').scrollTop = 0;
@@ -243,7 +242,6 @@ function newChat() {
 function openChat(c) {
   if (S.streaming && S.cur !== c) stop();
   S.cur = c;
-  if ($('search-input').value) { $('search-input').value = ''; S.query = ''; }
   go('home');
   requestAnimationFrame(() => { $('scroller').scrollTop = $('scroller').scrollHeight; });
 }
@@ -515,22 +513,6 @@ function chatRow(c) {
       }, { title: 'Delete' })));
 }
 
-// ---------- SEARCH ----------
-let searchSeq = 0, searchFirst = null;
-async function paintSearch() {
-  const q = S.query, seq = ++searchSeq, lq = q.toLowerCase();
-  const notes = await VA.searchNotes(q);
-  if (seq !== searchSeq) return;
-  const chats = S.chats.filter((c) => c.title.toLowerCase().includes(lq) || c.msgs.some((m) => (m.text || '').toLowerCase().includes(lq))).slice(0, 6);
-  searchFirst = notes[0] ? () => openNote(notes[0].file) : chats[0] ? () => openChat(chats[0]) : null;
-  $('view-search').replaceChildren(
-    h('section', { cls: 'search-section' }, h('h2', { text: 'Notes' }),
-      h('div', { cls: 'rows' }, notes.length ? notes.map(noteRow) : h('p', { cls: 'empty', text: `No notes match “${q}”.` }))),
-    h('section', { cls: 'search-section' }, h('h2', { text: 'Saved chats' }),
-      h('div', { cls: 'rows' }, chats.length ? chats.map((c) => row('chat', c.title, chatPreview(c), chatMeta(c.when), () => openChat(c), { pinned: c.pinned })) : h('p', { cls: 'empty', text: 'No chats match.' }))),
-    pill('pill pill-outline', `Ask Rook about “${q.length > 40 ? q.slice(0, 39) + '…' : q}”`, () => { $('search-input').value = ''; S.query = ''; S.cur = null; S.view = 'home'; send(q); }, 'chat'));
-}
-
 // ---------- SETTINGS ----------
 async function paintSettings() {
   const cfg = S.cfg;
@@ -556,7 +538,7 @@ async function paintSettings() {
   };
   paintScope();
   const card = (id, title, ...kids) => h('section', { cls: 'settings-card', id }, h('h2', { text: title }), ...kids);
-  const keys = [['New conversation', ['Ctrl', 'N']], ['Search', ['Ctrl', 'K']], ['Quick-capture strip', ['Ctrl', 'M']], ['Settings', ['Ctrl', ',']], ['Chat · Notes', ['Ctrl', '1–2']], ['Send', ['Enter']], ['New line', ['Shift', 'Enter']], ['Stop a reply', ['Esc']]];
+  const keys = [['New conversation', ['Ctrl', 'N']], ['Quick-capture strip', ['Ctrl', 'M']], ['Settings', ['Ctrl', ',']], ['Chat · Notes', ['Ctrl', '1–2']], ['Send', ['Enter']], ['New line', ['Shift', 'Enter']], ['Stop a reply', ['Esc']]];
   const secs = [['set-vault', 'Vault'], ['set-access', 'Access'], ['set-assistant', 'Assistant'], ['set-keys', 'Keyboard shortcuts'], ['set-about', 'About']];
   const nav = h('nav', { cls: 'settings-nav', 'aria-label': 'Settings categories' }, secs.map(([id, l], i) =>
     h('button', { type: 'button', cls: i ? '' : 'on', onClick: (e) => { nav.querySelectorAll('button').forEach((b) => b.classList.remove('on')); e.currentTarget.classList.add('on'); $(id).scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, l)));
@@ -654,9 +636,9 @@ function toggleMini() { setMini(S.mini ? false : lastMini()); }
 // ---------- navigation ----------
 const NAV = [['home', 'Chat'], ['notes', 'Notes']];
 function go(view) {
-  if (view !== S.view && S.view !== 'search' && S.view !== 'settings') S.prevView = S.view;
+  if (view !== S.view && S.view !== 'settings') S.prevView = S.view;
   S.view = view;
-  if (S.mini && view !== 'home') { setMini(false); return; } // notes, search and settings need the full window
+  if (S.mini && view !== 'home') { setMini(false); return; } // notes and settings need the full window
   paint();
 }
 function paint() {
@@ -666,7 +648,6 @@ function paint() {
   if (el === 'view-home') paintHome();
   else if (el === 'view-chat') paintChat();
   else if (S.view === 'notes') { paintTree(); paintPane(); }
-  else if (S.view === 'search') paintSearch();
   else if (S.view === 'settings') paintSettings();
   paintAsk();
 }
@@ -686,7 +667,6 @@ async function loadNotes() {
 function wire() {
   $('brand-mark').append(mark());
   $('compact-mark').append(mark('compact-mark'));
-  $('search-icon').append(icon('search', 'sm'));
   $('go-home').addEventListener('click', () => go('home'));
   $('topbar-tools').append(tool('plus', 'New conversation', newChat, { title: 'New conversation (Ctrl N)' }),
     tool('chat', 'Side chat', () => setMini('panel'), { title: 'Side chat' }),
@@ -709,28 +689,13 @@ function wire() {
   ci.addEventListener('input', paintAsk);
   ci.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); send(ci.value); } });
 
-  const si = $('search-input'); let st;
-  si.addEventListener('input', () => {
-    clearTimeout(st);
-    st = setTimeout(() => {
-      S.query = si.value.trim();
-      if (S.query) { if (S.view !== 'search') { if (S.view !== 'settings') S.prevView = S.view; S.view = 'search'; } paint(); }
-      else if (S.view === 'search') { S.view = S.prevView; paint(); }
-    }, 120);
-  });
-  si.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && S.query) { e.preventDefault(); if (searchFirst) searchFirst(); }
-    if (e.key === 'Escape') { si.value = ''; S.query = ''; if (S.view === 'search') { S.view = S.prevView; paint(); } si.blur(); }
-  });
-
   document.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
     if (e.ctrlKey && k === 'n') { e.preventDefault(); newChat(); }
-    else if (e.ctrlKey && k === 'k') { e.preventDefault(); si.focus(); si.select(); }
     else if (e.ctrlKey && k === 'm') { e.preventDefault(); toggleMini(); }
     else if (e.ctrlKey && k === ',') { e.preventDefault(); go('settings'); }
     else if (e.ctrlKey && /^[1-2]$/.test(k)) { e.preventDefault(); go(NAV[Number(k) - 1][0]); }
-    else if (e.key === 'Escape' && S.streaming && document.activeElement !== si) stop();
+    else if (e.key === 'Escape' && S.streaming) stop();
   });
 }
 

@@ -144,14 +144,6 @@ ipcMain.handle('vault:recent', () => {
   const root = loadCfg().vaultWin;
   return walkVault(root).slice().sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, 4).map(noteView);
 });
-ipcMain.handle('vault:search', (_, q) => {
-  const root = loadCfg().vaultWin;
-  const needle = String(q || '').toLowerCase().trim();
-  if (!needle) return [];
-  return walkVault(root).filter((f) => f.rel.toLowerCase().includes(needle))
-    .sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, 8).map(noteView);
-});
-
 ipcMain.handle('vault:list', () => walkVault(loadCfg().vaultWin).map(noteView).sort((a, b) => a.file.localeCompare(b.file, undefined, { sensitivity: 'base', numeric: true })));
 ipcMain.handle('vault:graph', () => buildGraph(loadCfg().vaultWin));
 ipcMain.handle('note:resolve', (_, name) => noteIndex(walkVault(loadCfg().vaultWin))(name));
