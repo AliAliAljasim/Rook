@@ -24,7 +24,7 @@ const S = {
   view: 'home', prevView: 'home', streaming: false, mini: false,
   note: null, noteCtx: true, pane: 'map', treeOpen: new Set(), treeFilter: '',
   graph: null, graphStale: true, map: null, mapSel: null, mapFilter: '',
-  chatFilter: '', chatTab: 'all', renaming: null, query: '', version: ''
+  chatFilter: '', chatTab: 'all', renaming: null, query: '', version: '', update: { state: 'idle' }
 };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -577,7 +577,40 @@ async function paintSettings() {
         h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Your name' })), name)),
       card('set-keys', 'Keyboard shortcuts', h('dl', { cls: 'keys' }, keys.map(([l, ks]) => h('div', null, h('dt', { text: l }), h('dd', null, ks.map((k) => h('kbd', { text: k }))))))),
       card('set-about', 'About', h('div', { cls: 'sp-line' }, h('span', { text: 'Rook' }), h('span', { cls: 'mono muted', text: S.version ? 'v' + S.version : '' })),
+        h('div', { cls: 'sp-line', id: 'upd-slot' }),
         h('p', { cls: 'sp-help', text: 'Your notes stay in the vault on this computer. Saved chats and settings are kept locally in Rook’s app data.' })))));
+  paintUpdate();
+}
+
+// ---------- updates ----------
+function updateText(u) {
+  switch (u.state) {
+    case 'checking': return 'Checking for updates…';
+    case 'current': return 'Rook is up to date.';
+    case 'downloading': return `Downloading version ${u.version || ''}… ${u.percent || 0}%`;
+    case 'ready': return `Version ${u.version} is ready. It installs when Rook restarts.`;
+    case 'error': return 'Could not check for updates.';
+    case 'dev': return 'Updates are off in the development build.';
+    default: return 'Updates install automatically.';
+  }
+}
+function paintUpdate() {
+  const slot = $('upd-slot');
+  if (!slot) return;
+  const u = S.update;
+  const busy = u.state === 'checking' || u.state === 'downloading';
+  slot.replaceChildren(h('span', { cls: 'muted', role: 'status', title: u.error || '', text: updateText(u) }),
+    u.state === 'ready' ? pill('pill-ghost', 'Restart to update', () => VA.update.install())
+      : h('button', { type: 'button', cls: 'pill-ghost', disabled: busy, onClick: () => VA.update.check() }, 'Check for updates'));
+  if (u.state === 'error' && u.error) slot.after(h('p', { cls: 'sp-help warn upd-err', text: u.error }));
+  else document.querySelectorAll('.upd-err').forEach((e) => e.remove());
+}
+function onUpdate(u) {
+  const was = S.update.state;
+  S.update = u;
+  document.querySelectorAll('.upd-err').forEach((e) => e.remove());
+  paintUpdate();
+  if (u.state === 'ready' && was !== 'ready') toast(`Rook ${u.version} is ready.`, { action: 'Restart', onAction: () => VA.update.install() });
 }
 
 // ---------- ask bar + compact strip ----------
@@ -706,6 +739,8 @@ function wire() {
   wire();
   S.cfg = await VA.getConfig();
   S.version = await VA.version().catch(() => '');
+  S.update = await VA.update.get().catch(() => S.update);
+  VA.update.onStatus(onUpdate);
   S.chats = (await VA.loadChats()) || [];
   for (const c of S.chats) for (const m of c.msgs) if (m.role === 'bot' && !m.done) { m.done = true; m.stopped = true; }
   await loadNotes();

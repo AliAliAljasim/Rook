@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('api', {
   openNote: inv('note:open'), openExternal: inv('ext:open'),
   saveNote: inv('note:save'), undoCreate: inv('note:undoCreate'),
   loadChats: inv('chats:load'), saveChats: inv('chats:save'),
+  update: { get: inv('update:get'), check: () => ipcRenderer.send('update:check'), install: () => ipcRenderer.send('update:install'),
+            onStatus: (cb) => ipcRenderer.on('update:status', (_, s) => cb(s)) },
   copy: (t) => ipcRenderer.send('clipboard:write', t),
   win: { minimize: () => ipcRenderer.send('win:minimize'), maximize: () => ipcRenderer.send('win:maximize'),
          close: () => ipcRenderer.send('win:close'), mini: (mode) => ipcRenderer.send('win:mini', mode || false) }

@@ -1,5 +1,5 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, screen } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { buildPolicy, SYSTEM_PROMPT } = require('./policy');
@@ -311,11 +311,52 @@ function migrateOldData() {
   }
 }
 
+// ---- auto-update: GitHub releases of the (private) repo ------------------------------
+// The repo is private, so the updater needs a token. It is not stored anywhere: each check
+// asks the GitHub CLI inside WSL (`gh auth token`) and keeps the answer in memory only.
+let upd = { state: 'idle', version: null, percent: 0, error: null };
+let updater = null;
+function setUpd(patch) {
+  upd = { ...upd, ...patch };
+  if (win && !win.isDestroyed()) win.webContents.send('update:status', upd);
+  try { fs.writeFileSync(userFile('update.log'), `${new Date().toISOString()} ${JSON.stringify(upd)}\n`); } catch { /* best effort */ }
+}
+const ghToken = () => new Promise((resolve) => {
+  execFile('wsl.exe', ['-e', 'bash', '-lc', 'gh auth token'], { windowsHide: true, timeout: 20000 },
+    (err, out) => resolve(err ? null : (String(out).trim().split(/\s+/).pop() || null)));
+});
+async function checkUpdates() {
+  if (!app.isPackaged) return setUpd({ state: 'dev' });
+  if (['checking', 'downloading', 'ready'].includes(upd.state)) return;
+  setUpd({ state: 'checking', error: null });
+  try {
+    if (!updater) {
+      updater = require('electron-updater').autoUpdater;
+      updater.autoDownload = true;
+      updater.autoInstallOnAppQuit = true; // a downloaded update is applied the next time Rook closes
+      updater.on('update-available', (i) => setUpd({ state: 'downloading', version: i.version, percent: 0 }));
+      updater.on('update-not-available', () => setUpd({ state: 'current' }));
+      updater.on('download-progress', (p) => setUpd({ state: 'downloading', percent: Math.round(p.percent || 0) }));
+      updater.on('update-downloaded', (i) => setUpd({ state: 'ready', version: i.version, percent: 100 }));
+      updater.on('error', (e) => setUpd({ state: 'error', error: String(e && e.message || e).slice(0, 300) }));
+    }
+    const pub = require('../package.json').build.publish[0];
+    const token = await ghToken();
+    if (!token) return setUpd({ state: 'error', error: 'No GitHub sign-in found in WSL. Run "gh auth login" there; the repository is private.' });
+    updater.setFeedURL({ provider: 'github', owner: pub.owner, repo: pub.repo, private: true, token });
+    await updater.checkForUpdates();
+  } catch (e) {
+    setUpd({ state: 'error', error: String(e && e.message || e).slice(0, 300) });
+  }
+}
+ipcMain.handle('update:get', () => upd);
+ipcMain.on('update:check', () => { checkUpdates(); });
+ipcMain.on('update:install', () => { if (upd.state === 'ready' && updater) { saveMiniSpot(); updater.quitAndInstall(true, true); } });
+
 app.whenReady().then(() => {
   migrateOldData();
   createWindow();
-  if (app.isPackaged) {
-    try { require('electron-updater').autoUpdater.checkForUpdatesAndNotify(); } catch { /* offline or no release yet */ }
-  }
+  setTimeout(checkUpdates, 8000);
+  setInterval(checkUpdates, 4 * 3600e3);
 });
 app.on('window-all-closed', () => app.quit());

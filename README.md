@@ -7,6 +7,11 @@ Writes are allowed only inside the vault; everything else is read-only.
 - **Notes**: a folder tree with a Note/Map toggle. Note is a read-only markdown viewer (frontmatter, callouts, nested lists, tables, wiki-links, linked notes). Map is a graph of notes (dots) and `[[links]]` (lines): drag, zoom, click a dot, double-click to open.
 - **Mini modes**: a side chat (narrow always-on-top panel showing the conversation) and a quick-capture bar. Each remembers its own spot; Ctrl M toggles the last one used.
 
+## Updates
+Rook checks GitHub releases shortly after launch and every few hours, downloads a newer version in the background and installs it on restart
+(Settings → About shows the status and a manual check). The repo is private, so each check gets a token from `gh auth token` inside WSL; nothing is stored.
+Publish a version with `make release` after bumping `version` and pushing main.
+
 ## Design
 Shares Groove's design language (`src/style.css`): warm near-black ground, one amber accent, Instrument Sans / DM Mono / Anton,
 pill controls, soft panels, the splash that swipes up. Fonts are bundled in `src/fonts/` so the app works offline.
