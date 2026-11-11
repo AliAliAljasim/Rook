@@ -1,7 +1,7 @@
 {
   "name": "rook",
   "productName": "Rook",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Note-taking agent: Claude Code (WSL) with write access only to the Obsidian vault",
   "main": "src/main.js",
   "scripts": {

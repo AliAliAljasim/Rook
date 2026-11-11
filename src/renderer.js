@@ -539,7 +539,7 @@ async function paintSettings() {
   };
   paintScope();
   const card = (id, title, ...kids) => h('section', { cls: 'settings-card', id }, h('h2', { text: title }), ...kids);
-  const keys = [['New conversation', ['Ctrl', 'N']], ['Quick-capture strip', ['Ctrl', 'M']], ['Settings', ['Ctrl', ',']], ['Chat · Notes', ['Ctrl', '1–2']], ['Send', ['Enter']], ['New line', ['Shift', 'Enter']], ['Stop a reply', ['Esc']]];
+  const keys = [['New conversation', ['Ctrl', 'N']], ['Side chat or bar', ['Ctrl', 'M']], ['Settings', ['Ctrl', ',']], ['Chat · Notes', ['Ctrl', '1–2']], ['Send', ['Enter']], ['New line', ['Shift', 'Enter']], ['Stop a reply', ['Esc']]];
   const secs = [['set-vault', 'Vault'], ['set-access', 'Access'], ['set-assistant', 'Assistant'], ['set-keys', 'Keyboard shortcuts'], ['set-about', 'About']];
   const nav = h('nav', { cls: 'settings-nav', 'aria-label': 'Settings categories' }, secs.map(([id, l], i) =>
     h('button', { type: 'button', cls: i ? '' : 'on', onClick: (e) => { nav.querySelectorAll('button').forEach((b) => b.classList.remove('on')); e.currentTarget.classList.add('on'); $(id).scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, l)));
@@ -623,7 +623,7 @@ function paintAsk() {
   // compact strip
   const bot = lastBot();
   $('compact').classList.toggle('busy', S.streaming);
-  $('compact-status').textContent = S.streaming ? (bot?.blocks.some((b) => b.t === 'tool' && b.status === 'running') ? 'Reading the vault' : 'Writing') : bot?.error ? 'Failed' : bot?.done && S.mini ? 'Done' : 'Quick capture';
+  $('compact-status').textContent = S.streaming ? (bot?.blocks.some((b) => b.t === 'tool' && b.status === 'running') ? 'Working' : 'Writing') : bot?.error ? 'Failed' : bot?.done && S.mini ? 'Done' : 'Quick capture';
   $('compact-send').replaceChildren(sendBtn($('compact-input').value, () => send($('compact-input').value)));
 }
 // Mini modes: 'panel' is a side chat that shows the conversation; 'bar' is the quick-capture strip. false is the full window.
