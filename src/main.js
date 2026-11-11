@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, screen, Tray, Menu, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, screen, Tray, Menu, Notification, globalShortcut, nativeTheme } = require('electron');
 const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { buildPolicy, SYSTEM_PROMPT } = require('./policy');
 const { resolveInside } = require('./guard');
+const schedule = require('./schedule');
 
 const DEFAULTS = {
   vaultWin: 'C:\\Users\\alijas\\Documents\\Vault',
@@ -11,11 +12,31 @@ const DEFAULTS = {
   readScope: 'machine', // 'machine' | 'vault'
   name: 'Ali',
   launchAtLogin: true, // start with Windows, quietly in the tray
-  keys: {}             // the user's changed shortcuts, { action: 'Ctrl+N' }; defaults live in the renderer
+  keys: {},            // the user's changed shortcuts, { action: 'Ctrl+N' }; defaults live in the renderer
+  theme: 'dark',       // 'dark' | 'light' | 'system'
+  textSize: 'regular', // 'small' | 'regular' | 'large'
+  model: '',           // '' lets the Claude CLI choose; otherwise one of MODELS
+  effort: '',          // '' lets the CLI choose; otherwise one of EFFORTS
+  projects: [],        // [{ name, path }] folders Rook should know by name (path as WSL sees it)
+  schedule: { dailyDays: [], weeklyDay: -1, weeklyHour: 16 } // days are 0 (Sunday) to 6; -1 turns the weekly review off
 };
-const KEY_ACTIONS = ['newChat', 'mini', 'settings', 'chat', 'notes'];
+const MODELS = ['haiku', 'sonnet', 'opus', 'fable'];
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const SUMMON_DEFAULT = 'Ctrl+Alt+Space';
+const CAPTURE_DEFAULT = 'Ctrl+Alt+C';
+const KEY_ACTIONS = ['newChat', 'mini', 'settings', 'chat', 'notes', 'search', 'voice', 'summon', 'capture'];
+const oneOf = (v, list, fallback) => (list.includes(v) ? v : fallback);
+const cleanProjects = (list) => (Array.isArray(list) ? list : []).slice(0, 30)
+  .map((p) => ({ name: String(p?.name || '').replace(/[\r\n"`]/g, ' ').trim().slice(0, 60), path: anyToWsl(String(p?.path || '').replace(/[\r\n"`]/g, '').trim()).slice(0, 300) }))
+  .filter((p) => p.name && p.path.startsWith('/'));
+function cleanSchedule(x) {
+  const days = Array.isArray(x?.dailyDays) ? [...new Set(x.dailyDays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort() : [];
+  const wd = Number.isInteger(x?.weeklyDay) && x.weeklyDay >= 0 && x.weeklyDay <= 6 ? x.weeklyDay : -1;
+  const wh = Number.isInteger(x?.weeklyHour) && x.weeklyHour >= 0 && x.weeklyHour <= 23 ? x.weeklyHour : 16;
+  return { dailyDays: days, weeklyDay: wd, weeklyHour: wh };
+}
 const cleanKeys = (k) => Object.fromEntries(Object.entries(k && typeof k === 'object' ? k : {})
-  .filter(([a, v]) => KEY_ACTIONS.includes(a) && typeof v === 'string' && /^((Ctrl|Alt|Shift)\+)*[^+\s]{1,12}$/.test(v)));
+  .filter(([a, v]) => KEY_ACTIONS.includes(a) && typeof v === 'string' && /^((Ctrl|Alt|Shift|Win)\+)*[^+\s]{1,12}$/.test(v)));
 // Windows starts Rook at sign-in with --hidden, which keeps the window in the tray until it is asked for.
 function applyLoginItem(cfg) {
   if (!app.isPackaged) return; // never register the development build
@@ -26,9 +47,16 @@ const readJson = (f, fallback) => { try { return JSON.parse(fs.readFileSync(f, '
 
 const loadCfg = () => ({ ...DEFAULTS, ...readJson(userFile('config.json'), {}) });
 const toWsl = (p) => p.replace(/^([A-Za-z]):[\\/]/, (_, d) => `mnt/${d.toLowerCase()}/`).replace(/\\/g, '/');
+// Any path the user might give (C:\\..., \\\\wsl.localhost\\<distro>\\..., or already /home/...) as WSL sees it.
+const anyToWsl = (p) => {
+  const m = /^\\\\wsl(?:\.localhost|\$)\\[^\\]+(\\.*)?$/i.exec(p);
+  if (m) return (m[1] || '\\').replace(/\\/g, '/');
+  return /^[A-Za-z]:[\\/]/.test(p) ? `/${toWsl(p)}` : p.replace(/\\/g, '/');
+};
 const fromWsl = (p) => p.replace(/^\/mnt\/([a-z])\//, (_, d) => `${d.toUpperCase()}:\\`).replace(/\//g, '\\');
 const vaultName = (cfg) => path.basename(cfg.vaultWin.replace(/[\\/]+$/, ''));
-const publicCfg = () => { const c = loadCfg(); return { ...c, vaultName: vaultName(c), vaultWsl: `/${toWsl(c.vaultWin)}` }; };
+const publicCfg = () => { const c = loadCfg(); return { ...c, vaultName: vaultName(c), vaultWsl: `/${toWsl(c.vaultWin)}`, summonOk, captureOk, models: MODELS, efforts: EFFORTS }; };
+let summonOk = true, captureOk = true;
 
 // ---- vault index (read-only walk) -------------------------------------------------
 let walkCache = { at: 0, root: '', files: [] };
@@ -106,11 +134,14 @@ function buildGraph(root) {
 const createdByApp = new Set(); // rel paths of notes this app created (so Undo can remove them)
 
 // ---- window ------------------------------------------------------------------------
+const isLight = (cfg) => cfg.theme === 'light' || (cfg.theme === 'system' && !nativeTheme.shouldUseDarkColors);
+// The page asks for these synchronously before it draws, so it never flashes the wrong theme or size.
+ipcMain.on('config:initial', (e) => { const c = loadCfg(); e.returnValue = { theme: isLight(c) ? 'light' : 'dark', textSize: c.textSize }; });
 let win, child, savedBounds = null, savedMax = false, miniMode = null;
 function createWindow(show = true) {
   win = new BrowserWindow({
     width: 980, height: 760, minWidth: 820, minHeight: 600, frame: false, title: 'Rook', show,
-    backgroundColor: '#131211', icon: path.join(__dirname, '..', 'build', 'icon.ico'),
+    backgroundColor: isLight(loadCfg()) ? '#F7F3EC' : '#131211', icon: path.join(__dirname, '..', 'build', 'icon.ico'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
   win.setMenuBarVisibility(false);
@@ -133,13 +164,73 @@ function createWindow(show = true) {
 }
 
 // ---- background: tray icon, single instance ------------------------------------------
-let tray = null, quitting = false;
+let tray = null, quitting = false, scheduler = null;
 function showWindow() {
   if (!win || win.isDestroyed()) return createWindow();
   if (win.isMinimized()) win.restore();
   win.show(); win.focus();
 }
 function quitApp() { quitting = true; app.quit(); }
+// The global shortcut works from any app: it brings Rook forward ready to type, or tucks it away again.
+const toAccel = (combo) => combo.split('+').map((p) => (p === 'Ctrl' ? 'Control' : p === 'Win' ? 'Super' : p.startsWith('Arrow') ? p.slice(5) : p)).join('+');
+function summon() {
+  if (win && !win.isDestroyed() && win.isVisible() && win.isFocused() && tray) return win.hide();
+  showWindow();
+  win.webContents.send('app:summon');
+}
+// Capture: from any app, the highlighted text (or, with nothing highlighted, what is on the clipboard) is
+// added to today's daily note with the time and the window it came from. No agent run, so it is instant.
+function runPs(script, cb) {
+  try { execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, timeout: 15000 }, (err, out) => cb(err ? '' : String(out).trim())); }
+  catch { cb(''); }
+}
+// Reads the front window's title, lets go of the shortcut's modifier keys, then presses Ctrl+C there.
+const COPY_PS = '$t=Add-Type -PassThru -Name W -Namespace RookCapture -MemberDefinition \'[DllImport("user32.dll")] public static extern void keybd_event(byte v, byte s, uint f, System.UIntPtr e);'
+  + '[DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();'
+  + '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr h, System.Text.StringBuilder s, int n);\';'
+  + '$sb=New-Object System.Text.StringBuilder 512;[void]$t::GetWindowText($t::GetForegroundWindow(),$sb,512);$z=[System.UIntPtr]::Zero;'
+  + 'foreach($k in 0x12,0x10,0x5B){$t::keybd_event($k,0,2,$z)};$t::keybd_event(0x11,0,0,$z);$t::keybd_event(0x43,0,0,$z);$t::keybd_event(0x43,0,2,$z);$t::keybd_event(0x11,0,2,$z);'
+  + '[Console]::OutputEncoding=[Text.Encoding]::UTF8;$sb.ToString()';
+let capturing = false;
+function captureSelection() {
+  if (capturing) return;
+  capturing = true;
+  const tell = (title, body) => {
+    capturing = false;
+    walkCache.at = 0;
+    try { new Notification({ title, body }).show(); } catch { /* optional */ }
+    if (win && !win.isDestroyed()) win.webContents.send('schedule:event', { title, body });
+  };
+  const file = (text, source) => {
+    if (!text.trim()) return tell('Nothing to capture', 'Highlight some text or copy something first.');
+    try {
+      const now = new Date();
+      const { rel, abs } = schedule.ensureDaily(loadCfg(), now, resolveInside);
+      const cur = fs.readFileSync(abs, 'utf8');
+      fs.appendFileSync(abs, (cur && !cur.endsWith('\n') ? '\n' : '') + schedule.captureEntry(text, source, now));
+      tell('Captured to today’s note', `${rel}: ${text.trim().replace(/\s+/g, ' ').slice(0, 90)}`);
+    } catch { tell('Could not capture', 'Today’s note could not be written. Check the vault folder in Settings.'); }
+  };
+  const before = clipboard.readText();
+  // With Rook itself in front there is nothing to copy from: take what is already on the clipboard.
+  if (win && !win.isDestroyed() && win.isFocused()) return file(before, 'the clipboard');
+  const textOnly = clipboard.availableFormats().every((f) => f.startsWith('text/'));
+  if (textOnly) clipboard.clear(); // so a fresh copy can be told apart from what was already there
+  runPs(COPY_PS, (title) => setTimeout(() => {
+    const copied = clipboard.readText();
+    const fresh = textOnly ? copied : (copied !== before ? copied : '');
+    if (textOnly && before) clipboard.writeText(before); // hand the clipboard back as it was
+    file(fresh || before, fresh ? title : 'the clipboard');
+  }, 220));
+}
+function registerSummon() {
+  try {
+    globalShortcut.unregisterAll();
+    const keys = loadCfg().keys;
+    summonOk = globalShortcut.register(toAccel(keys.summon || SUMMON_DEFAULT), summon);
+    captureOk = globalShortcut.register(toAccel(keys.capture || CAPTURE_DEFAULT), captureSelection);
+  } catch { summonOk = false; captureOk = false; }
+}
 function createTray() {
   try {
     tray = new Tray(path.join(__dirname, '..', 'build', 'icon.ico'));
@@ -159,10 +250,17 @@ ipcMain.handle('config:set', (_, c) => {
     readScope: c.readScope === 'vault' ? 'vault' : 'machine',
     name: typeof c.name === 'string' && c.name.trim() ? c.name.trim().slice(0, 40) : cur.name,
     launchAtLogin: typeof c.launchAtLogin === 'boolean' ? c.launchAtLogin : cur.launchAtLogin,
-    keys: cleanKeys(c.keys)
+    keys: cleanKeys(c.keys),
+    theme: oneOf(c.theme, ['dark', 'light', 'system'], cur.theme),
+    textSize: oneOf(c.textSize, ['small', 'regular', 'large'], cur.textSize),
+    model: c.model === '' ? '' : oneOf(c.model, MODELS, cur.model),
+    effort: c.effort === '' ? '' : oneOf(c.effort, EFFORTS, cur.effort),
+    projects: cleanProjects(c.projects),
+    schedule: cleanSchedule(c.schedule)
   };
   fs.writeFileSync(userFile('config.json'), JSON.stringify(next, null, 2));
   applyLoginItem(next);
+  registerSummon();
   walkCache.at = 0;
   return publicCfg();
 });
@@ -227,6 +325,57 @@ ipcMain.handle('note:undoCreate', (_, rel) => {
   walkCache.at = 0;
   return true;
 });
+
+// Search: notes whose name matches, then notes whose text matches (with the line it was found on).
+ipcMain.handle('vault:search', (_, q) => {
+  const root = loadCfg().vaultWin;
+  const needle = String(q || '').toLowerCase().trim();
+  if (needle.length < 2) return [];
+  const files = walkVault(root).slice().sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const byName = files.filter((f) => f.rel.toLowerCase().includes(needle)).slice(0, 8);
+  const seen = new Set(byName.map((f) => f.rel)), byText = [];
+  for (const f of files) {
+    if (byText.length >= 8) break;
+    if (seen.has(f.rel)) continue;
+    let text;
+    try { const abs = path.join(root, f.rel); if (fs.statSync(abs).size > 512 * 1024) continue; text = fs.readFileSync(abs, 'utf8'); } catch { continue; }
+    const at = text.toLowerCase().indexOf(needle);
+    if (at < 0) continue;
+    const start = text.lastIndexOf('\n', at) + 1, end = text.indexOf('\n', at);
+    byText.push({ ...noteView(f), snippet: text.slice(start, end < 0 ? undefined : end).trim().slice(0, 160) });
+  }
+  return [...byName.map(noteView), ...byText];
+});
+
+// Attachments dropped or pasted into the ask box are filed in the vault, where notes can embed them.
+ipcMain.handle('attach:save', (_, { name, bytes }) => {
+  const cfg = loadCfg();
+  const buf = Buffer.from(bytes);
+  if (!buf.length || buf.length > 25 * 1024 * 1024) throw new Error('Files up to 25 MB can be attached.');
+  let folder = 'Attachments';
+  try {
+    const set = readJson(path.join(cfg.vaultWin, '.obsidian', 'app.json'), {}).attachmentFolderPath;
+    if (typeof set === 'string' && set.trim() && !/^\.?\/?$/.test(set.trim()) && !set.startsWith('./')) folder = set.trim().replace(/^\/+|\/+$/g, '');
+  } catch { /* default folder */ }
+  const clean = String(name || 'file').replace(/[<>:"/\\|?*#^\[\]\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim().slice(-90) || 'file';
+  const ext = path.extname(clean), stem = clean.slice(0, clean.length - ext.length) || 'file';
+  let rel = `${folder}/${stem}${ext}`;
+  for (let n = 2; fs.existsSync(path.join(cfg.vaultWin, rel)); n++) rel = `${folder}/${stem} ${n}${ext}`;
+  const abs = resolveInside(cfg.vaultWin, rel); // guard: refuses anything outside the vault
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, buf, { flag: 'wx' });
+  return rel;
+});
+
+// Voice: Rook has no speech engine of its own, so it opens Windows voice typing (Win+H) on the ask box.
+ipcMain.on('voice:start', () => {
+  const ps = '$k=Add-Type -PassThru -Name K -Namespace RookKeys -MemberDefinition \'[DllImport("user32.dll")] public static extern void keybd_event(byte v, byte s, uint f, System.UIntPtr e);\';'
+    + '$z=[System.UIntPtr]::Zero;$k::keybd_event(0x5B,0,0,$z);$k::keybd_event(0x48,0,0,$z);$k::keybd_event(0x48,0,2,$z);$k::keybd_event(0x5B,0,2,$z)';
+  // -EncodedCommand (base64, UTF-16) avoids every quoting problem between Node, the command line and PowerShell.
+  try { execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')], { windowsHide: true }, () => {}); } catch { /* not on Windows */ }
+});
+
+ipcMain.handle('schedule:runWeekly', () => scheduler && scheduler.runWeeklyNow());
 
 ipcMain.handle('chats:load', () => readJson(userFile('chats.json'), []));
 ipcMain.handle('chats:save', (_, chats) => {
@@ -293,26 +442,69 @@ ipcMain.on('win:mini', (_, mode) => {
 
 // ---- chat: Claude Code CLI inside WSL ----------------------------------------------
 ipcMain.on('chat:cancel', () => child && child.kill());
-ipcMain.on('chat:send', (e, { prompt, sessionId }) => {
-  const cfg = loadCfg();
+// The command line for one agent run, shared by chats and scheduled tasks.
+function agentArgs(cfg, outputFlags) {
   const vaultWsl = toWsl(cfg.vaultWin);
-  const emit = (ev) => { if (!sender(e).isDestroyed()) sender(e).send('chat:event', ev); };
-
   // Policy lives outside the vault so the agent cannot modify it.
   const policyFile = userFile('policy.json');
   fs.writeFileSync(policyFile, JSON.stringify(buildPolicy(vaultWsl, cfg.readScope), null, 2));
-
-  const args = ['--cd', `/${vaultWsl}`, '-e', cfg.claudePath, '-p',
-    '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+  const args = ['--cd', `/${vaultWsl}`, '-e', cfg.claudePath, '-p', ...outputFlags,
     '--settings', `/${toWsl(policyFile)}`,
     '--append-system-prompt', SYSTEM_PROMPT(`/${vaultWsl}`, cfg.readScope, {
       home: (/^\/home\/[^/]+/.exec(cfg.claudePath) || [])[0],
-      winHome: (/^\/mnt\/[a-z]\/Users\/[^/]+/i.exec(`/${vaultWsl}`) || [])[0]
+      winHome: (/^\/mnt\/[a-z]\/Users\/[^/]+/i.exec(`/${vaultWsl}`) || [])[0],
+      projects: cfg.projects
     })];
   // Reading the whole machine: the CLI only lists and searches inside its working directories, so add the
   // filesystem root as one. This does not grant writes: with no allow rule for them, edits and any shell
   // command that creates or changes a file outside the vault are still refused.
   if (cfg.readScope !== 'vault') args.push('--add-dir', '/');
+  if (MODELS.includes(cfg.model)) args.push('--model', cfg.model);
+  if (EFFORTS.includes(cfg.effort)) args.push('--effort', cfg.effort);
+  return args;
+}
+
+// ---- change history: what a note looked like before the agent touched it ------------
+const backupFile = (id) => path.join(userFile('backups'), `${String(id).replace(/[^\w-]/g, '')}.bak`);
+function keepBefore(cfg, toolUse) {
+  try {
+    const abs = resolveInside(cfg.vaultWin, fromWsl(toolUse.input.file_path));
+    if (!fs.existsSync(abs)) return 'new';
+    if (fs.statSync(abs).size > 1024 * 1024) return null;
+    fs.mkdirSync(userFile('backups'), { recursive: true });
+    fs.copyFileSync(abs, backupFile(toolUse.id));
+    return 'edit';
+  } catch { return null; } // outside the vault, or unreadable: nothing to keep
+}
+function pruneBackups() {
+  try {
+    for (const f of fs.readdirSync(userFile('backups'))) {
+      const p = path.join(userFile('backups'), f);
+      if (Date.now() - fs.statSync(p).mtimeMs > 30 * 86400e3) fs.unlinkSync(p);
+    }
+  } catch { /* no backups yet */ }
+}
+ipcMain.handle('change:get', (_, { id, rel }) => {
+  const cfg = loadCfg();
+  const abs = resolveInside(cfg.vaultWin, String(rel));
+  const read = (p) => { try { return fs.statSync(p).size > 1024 * 1024 ? null : fs.readFileSync(p, 'utf8'); } catch { return null; } };
+  return { before: read(backupFile(id)), now: read(abs), hasBackup: fs.existsSync(backupFile(id)) };
+});
+// Puts a note back as it was before one change. A note the agent created goes to the Recycle Bin instead.
+ipcMain.handle('change:revert', async (_, { id, rel, created }) => {
+  const cfg = loadCfg();
+  const abs = resolveInside(cfg.vaultWin, String(rel));
+  if (fs.existsSync(backupFile(id))) fs.copyFileSync(backupFile(id), abs);
+  else if (created && /\.md$/i.test(abs) && fs.existsSync(abs)) await shell.trashItem(abs);
+  else return false;
+  walkCache.at = 0;
+  return true;
+});
+
+ipcMain.on('chat:send', (e, { prompt, sessionId }) => {
+  const cfg = loadCfg();
+  const emit = (ev) => { if (!sender(e).isDestroyed()) sender(e).send('chat:event', ev); };
+  const args = agentArgs(cfg, ['--output-format', 'stream-json', '--verbose', '--include-partial-messages']);
   if (sessionId) args.push('--resume', sessionId);
 
   child = spawn('wsl.exe', args, { windowsHide: true });
@@ -330,8 +522,9 @@ ipcMain.on('chat:send', (e, { prompt, sessionId }) => {
       // Tell the UI whether a Write targets an existing note (Edited vs Created).
       if (ev.type === 'assistant') {
         for (const b of ev.message?.content || []) {
-          if (b.type === 'tool_use' && b.name === 'Write' && b.input?.file_path) {
-            b.existed = fs.existsSync(fromWsl(b.input.file_path));
+          if (b.type === 'tool_use' && ['Write', 'Edit', 'MultiEdit'].includes(b.name) && b.input?.file_path) {
+            if (b.name === 'Write') b.existed = fs.existsSync(fromWsl(b.input.file_path));
+            b.backup = keepBefore(cfg, b); // 'edit' (a copy was kept), 'new' (the note did not exist) or null
           }
         }
       }
@@ -401,16 +594,45 @@ ipcMain.on('update:download', () => {
 ipcMain.on('update:install', () => { if (upd.state === 'ready' && updater) { saveMiniSpot(); quitting = true; updater.quitAndInstall(true, true); } });
 
 // Starting Rook again while it is in the tray brings the running one forward instead of opening a second.
+// Windows groups taskbar buttons by this id. The installer's shortcuts (and anything pinned from them) carry
+// the appId from package.json, so the running app must declare the same one or it shows up as a second icon.
+app.setAppUserModelId('com.alialialjasim.rook');
 const primary = app.requestSingleInstanceLock();
 if (!primary) app.quit();
 app.on('second-instance', showWindow);
 app.on('before-quit', () => { quitting = true; });
+app.on('will-quit', () => globalShortcut.unregisterAll());
 
 app.whenReady().then(() => {
   if (!primary) return;
   migrateOldData();
   createTray();
   applyLoginItem(loadCfg());
+  registerSummon();
+  pruneBackups();
+  scheduler = schedule.start({
+    loadCfg, userFile, readJson, resolveInside,
+    // One headless agent run; resolves with what it wrote back.
+    runAgent: (prompt) => new Promise((resolve) => {
+      const c = spawn('wsl.exe', agentArgs(loadCfg(), ['--output-format', 'json']), { windowsHide: true });
+      let out = '';
+      const timer = setTimeout(() => c.kill(), 20 * 60e3);
+      c.stdout.on('data', (d) => { out += d.toString('utf8'); });
+      c.on('error', () => { clearTimeout(timer); resolve({ ok: false, text: 'Could not start Claude.' }); });
+      c.on('close', (code) => {
+        clearTimeout(timer);
+        let text = '';
+        try { text = JSON.parse(out).result || ''; } catch { /* not JSON: failed early */ }
+        resolve({ ok: code === 0 && !!text, text });
+      });
+      c.stdin.end(prompt);
+    }),
+    notify: (title, body) => {
+      walkCache.at = 0;
+      try { new Notification({ title, body }).show(); } catch { /* optional */ }
+      if (win && !win.isDestroyed()) win.webContents.send('schedule:event', { title, body });
+    }
+  });
   createWindow(!(tray && process.argv.includes('--hidden')));
   setTimeout(checkUpdates, 8000);
   setInterval(checkUpdates, 4 * 3600e3);

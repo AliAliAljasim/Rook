@@ -24,7 +24,7 @@ const S = {
   view: 'home', prevView: 'home', streaming: false, mini: false,
   note: null, noteCtx: true, pane: 'map', treeOpen: new Set(), treeFilter: '',
   graph: null, graphStale: true, map: null, mapSel: null, mapFilter: '',
-  chatFilter: '', chatTab: 'all', renaming: null, version: '', update: { state: 'idle' }
+  chatFilter: '', chatTab: 'all', renaming: null, version: '', update: { state: 'idle' }, plist: false
 };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -149,8 +149,9 @@ function chipFor(t) {
   const input = t.input || {};
   const rel = vaultRel(wslToWin(input.file_path || ''));
   if (!rel) return null;
-  if (t.name === 'Write') return { verb: t.existed ? 'Edited' : 'Created', path: rel, diff: t.existed ? `${countLines(input.content)} lines` : 'new' };
-  return { verb: 'Edited', path: rel, diff: `+${countLines(input.new_string)} −${countLines(input.old_string)}` };
+  const keep = { id: t.id, backup: t.backup || null };
+  if (t.name === 'Write') return { verb: t.existed ? 'Edited' : 'Created', path: rel, diff: t.existed ? `${countLines(input.content)} lines` : 'new', ...keep };
+  return { verb: 'Edited', path: rel, diff: `+${countLines(input.new_string)} −${countLines(input.old_string)}`, ...keep };
 }
 const lastBot = () => S.cur?.msgs.slice().reverse().find((m) => m.role === 'bot');
 const lastBlock = (m) => m.blocks[m.blocks.length - 1];
@@ -166,7 +167,7 @@ function onEvent(ev) {
   } else if (ev.type === 'assistant' && !bot.stopped) {
     for (const c of ev.message?.content || []) {
       if (c.type !== 'tool_use') continue;
-      bot.blocks.push({ t: 'tool', id: c.id, name: c.name, input: c.input, existed: c.existed, status: 'running', ...describeTool(c.name, c.input) });
+      bot.blocks.push({ t: 'tool', id: c.id, name: c.name, input: c.input, existed: c.existed, backup: c.backup, status: 'running', ...describeTool(c.name, c.input) });
     }
   } else if (ev.type === 'user') {
     for (const c of ev.message?.content || []) {
@@ -211,16 +212,21 @@ VA.onEvent(onEvent);
 // ---------- sending ----------
 function send(text) {
   text = String(text || '').trim();
-  if (!text || S.streaming) return;
+  if (S.streaming || (!text && !ATTACH.length)) return;
+  const files = takeAttachments();
+  if (!text) text = files.length === 1 ? 'Here is a file.' : 'Here are some files.';
+  S.plist = false; closePop();
   const about = S.view === 'notes' && S.pane === 'note' && S.note && S.noteCtx ? S.note : null;
   if (!S.cur) {
     S.cur = { id: 'c' + Date.now(), title: text.length > 44 ? text.slice(0, 43) + '…' : text, when: Date.now(), pinned: false, sessionId: null, msgs: [] };
     S.chats.unshift(S.cur);
   }
-  S.cur.msgs.push({ role: 'user', text, time: clock(), about: about ? about.title : null }, { role: 'bot', time: clock(), blocks: [], done: false });
+  S.cur.msgs.push({ role: 'user', text, time: clock(), about: about ? about.title : null, files: files.length ? files.map((f) => f.name) : undefined }, { role: 'bot', time: clock(), blocks: [], done: false });
   S.streaming = true;
   $('ask').value = ''; $('compact-input').value = ''; autogrow();
-  VA.send(about ? `[The note "${about.file}" in the vault is open in the viewer; this message is about it.]\n\n${text}` : text, S.cur.sessionId);
+  const lead = [about ? `[The note "${about.file}" in the vault is open in the viewer; this message is about it.]` : '',
+    files.length ? `[Attached files, saved in the vault: ${files.map((f) => f.rel).join(', ')}]` : ''].filter(Boolean).join('\n');
+  VA.send(lead ? `${lead}\n\n${text}` : text, S.cur.sessionId);
   persist(); go('home');
   requestAnimationFrame(() => { $('scroller').scrollTop = $('scroller').scrollHeight; });
 }
@@ -238,10 +244,12 @@ function retry() {
 }
 function newChat() {
   if (S.streaming) stop();
+  S.plist = false;
   S.cur = null; go('home'); focusAsk();
 }
 function openChat(c) {
   if (S.streaming && S.cur !== c) stop();
+  S.plist = false;
   S.cur = c;
   go('home');
   requestAnimationFrame(() => { $('scroller').scrollTop = $('scroller').scrollHeight; });
@@ -267,6 +275,7 @@ function paintHome() {
     ['align', 'Summarize a project', 'Gather what is still open in a project.', 'Summarize the project '],
     ['eye', 'Make observations', 'Spot patterns in this week’s notes.', 'Make observations about this week’s notes.']
   ];
+  document.body.dataset.plist = S.mini === 'panel' && S.plist ? '1' : '';
   $('view-home').replaceChildren(
     h('section', { cls: 'hero' }, h('h1', { text: `Good ${part}, ${S.cfg.name}.` }),
       h('p', { text: `${num(S.noteCount)} notes in ${S.cfg.vaultName}. What should we work on?` })),
@@ -316,10 +325,11 @@ function botEl(m, isLast) {
   for (const b of m.blocks) {
     if (b.t === 'tool') { if (!group) group = []; group.push(b); continue; }
     if (group) { art.append(toolGroupEl(group)); group = null; }
-    if (b.t === 'text') { lastText = MD.render(b.text, mdCtx); art.append(lastText); }
-    else if (b.t === 'chips') art.append(h('div', { cls: 'chips' }, b.items.map((c) =>
+    if (b.t === 'text') { lastText = MD.render(splitChoices(b.text).text, mdCtx); art.append(lastText); }
+    else if (b.t === 'chips') art.append(h('div', { cls: 'chips' }, b.items.map((c) => h('span', { cls: 'chip-wrap' + (c.reverted ? ' reverted' : '') },
       h('button', { type: 'button', cls: 'chip', 'aria-label': `${c.verb} ${c.path}, open note`, onClick: () => openNote(c.path) },
-        h('span', { cls: 'chip-verb', text: c.verb }), h('span', { cls: 'chip-path', text: c.path }), h('span', { cls: 'chip-diff', text: c.diff })))));
+        h('span', { cls: 'chip-verb', text: c.reverted ? 'Undone' : c.verb }), h('span', { cls: 'chip-path', text: c.path }), h('span', { cls: 'chip-diff', text: c.diff })),
+      c.id ? h('button', { type: 'button', cls: 'chip chip-act', 'aria-label': `See what changed in ${c.path}`, title: 'See what changed, or undo it', onClick: () => openChanges(c) }, icon('undo', 'sm'), 'Changes') : null))));
     else if (b.t === 'blocked') art.append(h('div', { cls: 'blocked', role: 'note' }, h('span', { cls: 'blocked-icon' }, icon('lock', 'sm')),
       h('div', { cls: 'blocked-body' }, h('span', { cls: 'eyebrow', text: 'Read-only · outside the vault' }),
         h('p', { text: 'Rook can read this file but can’t change it. It can write the result to a new note in your vault instead.' }),
@@ -330,8 +340,12 @@ function botEl(m, isLast) {
   if (writing && lastText && lastBlock(m).t === 'text') (lastText.lastElementChild || lastText).append(h('span', { cls: 'caret', 'aria-hidden': 'true' }));
   if (m.stopped) art.append(h('p', { cls: 'stopped', text: 'Stopped' }));
   if (m.error) art.append(h('p', { cls: 'error-line', role: 'alert' }, icon('alert', 'sm'), m.error.slice(0, 300), isLast ? pill('pill-ghost', 'Retry', retry) : null));
+  // A question that ended with options: show them as buttons under the latest reply.
+  const lastTextBlock = m.blocks.slice().reverse().find((b) => b.t === 'text');
+  const choices = isLast && m.done && !m.error && !S.streaming && lastTextBlock ? splitChoices(lastTextBlock.text).choices : [];
+  if (choices.length) art.append(h('div', { cls: 'choices', role: 'group', 'aria-label': 'Answers' }, choices.map((c) => h('button', { type: 'button', cls: 'choice', onClick: () => send(c) }, c))));
   if (m.done && !m.error) {
-    const text = m.blocks.filter((b) => b.t === 'text').map((b) => b.text).join('\n\n');
+    const text = m.blocks.filter((b) => b.t === 'text').map((b) => splitChoices(b.text).text).join('\n\n');
     if (text) art.append(h('div', { cls: 'msg-acts' },
       tool('copy', 'Copy reply', () => { VA.copy(text); toast('Reply copied.'); }, { title: 'Copy' }),
       tool('filePlus', 'Save reply as a note', () => saveReply(text), { title: 'Save as note' })));
@@ -352,7 +366,8 @@ function paintChat() {
   const wrap = [h('button', { type: 'button', cls: 'back-link', onClick: newChat }, icon('back'), 'Home'), h('h1', { cls: 'sr', text: S.cur.title })];
   S.cur.msgs.forEach((m, i) => {
     if (m.role === 'user') wrap.push(h('article', { cls: 'msg-user', 'aria-label': `You said, ${m.time}` },
-      m.about ? h('span', { cls: 'msg-about' }, icon('file', 'sm'), m.about) : null, h('p', { text: m.text })));
+      m.about ? h('span', { cls: 'msg-about' }, icon('file', 'sm'), m.about) : null,
+      (m.files || []).map((f) => h('span', { cls: 'msg-about' }, icon('clip', 'sm'), f)), h('p', { text: m.text })));
     else wrap.push(botEl(m, i === S.cur.msgs.length - 1));
   });
   $('view-chat').replaceChildren(...wrap);
@@ -517,7 +532,7 @@ function chatRow(c) {
 // ---------- SETTINGS ----------
 async function paintSettings() {
   const cfg = S.cfg;
-  const save = async (patch, msg) => { S.cfg = await VA.setConfig({ ...S.cfg, ...patch }); toast(msg || 'Saved.'); paintAsk(); };
+  const save = async (patch, msg) => { S.cfg = await VA.setConfig({ ...S.cfg, ...patch }); if (msg !== null) toast(msg || 'Saved.'); paintAsk(); }; // msg null: the change is visible, no toast
   const vault = h('input', { cls: 'sp-input mono', id: 'st-vault', value: cfg.vaultWin, 'aria-label': 'Vault folder', spellcheck: 'false' });
   const help = h('p', { cls: 'sp-help' });
   const check = async (commit) => {
@@ -543,11 +558,72 @@ async function paintSettings() {
   const paintStart = () => startHost.replaceChildren(seg([['on', 'On'], ['off', 'Off']], S.cfg.launchAtLogin === false ? 'off' : 'on',
     async (v) => { await save({ launchAtLogin: v === 'on' }); paintStart(); }, 'Open Rook when Windows starts'));
   paintStart();
+  // Appearance
+  const lookHost = h('div', { cls: 'sp-stack' });
+  const paintLook = () => lookHost.replaceChildren(
+    h('div', { cls: 'sp-line' }, h('span', { text: 'Theme' }), seg([['dark', 'Dark'], ['light', 'Light'], ['system', 'Match Windows']], S.cfg.theme || 'dark', async (v) => { await save({ theme: v }, null); applyTheme(); paintLook(); }, 'Theme')),
+    h('div', { cls: 'sp-line' }, h('span', { text: 'Text size' }), seg([['small', 'Small'], ['regular', 'Regular'], ['large', 'Large']], S.cfg.textSize || 'regular', async (v) => { await save({ textSize: v }, null); applyTheme(); paintLook(); }, 'Text size')));
+  paintLook();
+
+  // Projects: folders Rook knows by name
+  const projHost = h('div', { cls: 'sp-stack' });
+  const paintProjects = () => {
+    const list = S.cfg.projects || [];
+    const pName = h('input', { cls: 'sp-input', placeholder: 'Name, e.g. rook', 'aria-label': 'Project name' });
+    const pPath = h('input', { cls: 'sp-input mono', placeholder: 'Folder, e.g. /home/you/project or C:\\Users\\you\\project', 'aria-label': 'Project folder', spellcheck: 'false' });
+    const add = async () => {
+      if (!pName.value.trim() || !pPath.value.trim()) return toast('Give the project a name and a folder.', { error: true });
+      const before = list.length;
+      await save({ projects: [...list, { name: pName.value, path: pPath.value }] }, 'Project added.');
+      if ((S.cfg.projects || []).length === before) toast('That folder path was not understood. Use a full path.', { error: true });
+      paintProjects();
+    };
+    [pName, pPath].forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); }));
+    projHost.replaceChildren(
+      list.length ? h('dl', { cls: 'keys' }, list.map((p, i) => h('div', null, h('dt', null, p.name, h('span', { cls: 'proj-path mono', text: p.path })),
+        h('dd', null, tool('trash', `Remove ${p.name}`, async () => { await save({ projects: list.filter((_, k) => k !== i) }, 'Project removed.'); paintProjects(); }, { title: 'Remove' })))))
+        : h('p', { cls: 'sp-help', text: 'No projects yet. Add one and Rook will know where it lives when you mention it by name.' }),
+      h('div', { cls: 'sp-row proj-add' }, pName, pPath,
+        pill('pill-ghost', 'Browse', async () => { const p = await VA.pickFolder(); if (p) { pPath.value = p; if (!pName.value) pName.value = p.replace(/[\\/]+$/, '').split(/[\\/]/).pop(); } }),
+        pill('pill-ghost', 'Add', add)));
+  };
+  paintProjects();
+
+  // Scheduled notes
+  const schedHost = h('div', { cls: 'sp-stack' });
+  const paintSched = () => {
+    const sc = { dailyDays: [], weeklyDay: -1, weeklyHour: 16, ...(S.cfg.schedule || {}) };
+    const setSched = async (patch) => { await save({ schedule: { ...sc, ...patch } }, null); paintSched(); };
+    const order = [1, 2, 3, 4, 5, 6, 0]; // Monday first
+    const dayBtns = h('div', { cls: 'day-picks', role: 'group', 'aria-label': 'Days that get a daily note' }, order.map((d) =>
+      h('button', { type: 'button', cls: sc.dailyDays.includes(d) ? 'on' : '', 'aria-pressed': String(sc.dailyDays.includes(d)),
+        onClick: () => setSched({ dailyDays: sc.dailyDays.includes(d) ? sc.dailyDays.filter((x) => x !== d) : [...sc.dailyDays, d] }) }, DAYS[d])));
+    const daySel = h('select', { cls: 'sp-select', 'aria-label': 'Day of the weekly review' }, [[-1, 'Off'], ...order.map((d) => [d, DAYS[d]])].map(([v, l]) => h('option', { value: String(v), selected: v === sc.weeklyDay }, l)));
+    daySel.addEventListener('change', () => setSched({ weeklyDay: Number(daySel.value) }));
+    const hourSel = h('select', { cls: 'sp-select', 'aria-label': 'Hour of the weekly review', disabled: sc.weeklyDay < 0 }, Array.from({ length: 24 }, (_, hr) => h('option', { value: String(hr), selected: hr === sc.weeklyHour }, `${pad(hr)}:00`)));
+    hourSel.addEventListener('change', () => setSched({ weeklyHour: Number(hourSel.value) }));
+    const runNow = pill('pill-ghost', 'Write this week’s review now', async () => {
+      runNow.disabled = true; toast('Writing the weekly review in the background…');
+      try { await VA.runWeekly(); } finally { runNow.disabled = false; }
+    });
+    schedHost.replaceChildren(
+      h('div', { cls: 'sp-line' }, h('span', { text: 'Daily note on' }), dayBtns),
+      h('p', { cls: 'sp-help', text: sc.dailyDays.length ? 'On these days Rook creates the day’s note in Daily/ (from Templates/daily.md if there is one).' : 'No days picked, so no daily notes are created.' }),
+      h('div', { cls: 'sp-line' }, h('span', { text: 'Weekly review' }), h('div', { cls: 'sp-row' }, daySel, hourSel)),
+      h('p', { cls: 'sp-help', text: sc.weeklyDay < 0 ? 'Off.' : 'Rook reads the week’s notes and writes a review into the vault. If the PC is off at that time, it is written the next time Rook is running that week.' }),
+      h('div', { cls: 'sp-line' }, h('span', { cls: 'sp-help', text: 'Scheduled notes need Rook running; it can sit in the tray.' }), runNow));
+  };
+  paintSched();
+
   const keysHost = h('div');
-  const setKeys = async (keys, msg) => { await save({ keys }, msg || 'Shortcut changed.'); paintTools(); paintKeys(); };
+  const setKeys = async (keys, msg) => {
+    await save({ keys }, msg || 'Shortcut changed.'); paintTools(); paintKeys();
+    for (const [flag, action, what] of [['summonOk', 'summon', 'showing Rook'], ['captureOk', 'capture', 'capturing text']])
+      if (S.cfg[flag] === false) toast(`Windows would not give Rook ${keyHint(action)}: another app is using it. Pick a different shortcut for ${what}.`, { error: true });
+  };
   const paintKeys = () => keysHost.replaceChildren(shortcutRows(setKeys));
   paintKeys();
-  const secs = [['set-vault', 'Vault'], ['set-access', 'Access'], ['set-assistant', 'Assistant'], ['set-startup', 'Startup'], ['set-keys', 'Keyboard shortcuts'], ['set-about', 'About']];
+  const secs = [['set-vault', 'Vault'], ['set-access', 'Access'], ['set-assistant', 'Assistant'], ['set-projects', 'Projects'], ['set-schedule', 'Scheduled notes'], ['set-look', 'Appearance'], ['set-startup', 'Startup'], ['set-keys', 'Keyboard shortcuts'], ['set-about', 'About']];
   const nav = h('nav', { cls: 'settings-nav', 'aria-label': 'Settings categories' }, secs.map(([id, l], i) =>
     h('button', { type: 'button', cls: i ? '' : 'on', onClick: (e) => { nav.querySelectorAll('button').forEach((b) => b.classList.remove('on')); e.currentTarget.classList.add('on'); $(id).scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, l)));
   $('view-settings').replaceChildren(
@@ -565,11 +641,14 @@ async function paintSettings() {
         h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Claude CLI path, inside WSL' })), claude),
         h('p', { cls: 'sp-help', text: 'Rook runs Claude Code in WSL. Sign in once with “claude auth login” (or make login).' }),
         h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Your name' })), name)),
+      card('set-projects', 'Projects', projHost),
+      card('set-schedule', 'Scheduled notes', schedHost),
+      card('set-look', 'Appearance', lookHost),
       card('set-startup', 'Startup',
         h('div', { cls: 'sp-line' }, h('span', { text: 'Open Rook when Windows starts' }), startHost),
         h('p', { cls: 'sp-help', text: 'It starts quietly in the tray by the clock; click its icon to open the window.' })),
       card('set-keys', 'Keyboard shortcuts', keysHost,
-        h('div', { cls: 'sp-line' }, h('span', { cls: 'sp-help', text: 'Click a shortcut, then press the new keys. Esc cancels.' }),
+        h('div', { cls: 'sp-line' }, h('span', { cls: 'sp-help', text: 'Click a shortcut, then press the new keys (Ctrl, Alt, Shift and the Windows key all work). Esc cancels. Windows keeps some Windows-key combinations for itself.' }),
           pill('pill-ghost', 'Reset to defaults', () => setKeys({}, 'Shortcuts reset.')))),
       card('set-about', 'About', h('div', { cls: 'sp-line' }, h('span', { text: 'Rook' }), h('span', { cls: 'mono muted', text: S.version ? 'v' + S.version : '' })),
         h('div', { cls: 'sp-line', id: 'upd-slot' }),
@@ -627,11 +706,14 @@ function sendBtn(value, onSend) {
 function paintAsk() {
   $('askbar').classList.toggle('hidden', S.view === 'settings');
   $('askbar').classList.toggle('busy', S.streaming);
-  $('send-slot').replaceChildren(sendBtn($('ask').value, () => send($('ask').value)));
+  $('send-slot').replaceChildren(sendBtn($('ask').value || (ATTACH.length ? '.' : ''), () => send($('ask').value)));
+  $('ask-files').replaceChildren(...attachNodes());
   const ctx = S.view === 'notes' && S.pane === 'note' && S.note && S.noteCtx;
   $('ask-ctx-slot').replaceChildren(...(ctx ? [h('span', { cls: 'ask-ctx' }, icon('file', 'sm'), h('span', { text: `About: ${S.note.title}` }),
     h('button', { type: 'button', 'aria-label': 'Ask without this note', title: 'Ask without this note', onClick: () => { S.noteCtx = false; paintAsk(); } }, icon('x', 'sm')))] : []));
-  $('ask-hint').textContent = S.cfg.readScope === 'vault' ? 'Reads only inside your vault · writes only inside your vault' : 'Reads anywhere on this PC · writes only inside your vault';
+  const agent = agentLabel();
+  $('ask-hint').replaceChildren(S.cfg.readScope === 'vault' ? 'Reads only inside your vault · writes only inside your vault' : 'Reads anywhere on this PC · writes only inside your vault',
+    ' · ', h('button', { type: 'button', cls: 'hint-btn', title: 'Choose the model and effort (or type /agent)', onClick: () => (popKind === 'agent' ? closePop() : openAgentPop()) }, agent || '/agent'));
   // compact strip
   const bot = lastBot();
   $('compact').classList.toggle('busy', S.streaming);
@@ -690,15 +772,20 @@ const SHORTCUTS = [
   ['mini', 'Side chat or bar', 'Ctrl+M', () => toggleMini()],
   ['settings', 'Settings', 'Ctrl+,', () => go('settings')],
   ['chat', 'Go to Chat', 'Ctrl+1', () => go('home')],
-  ['notes', 'Go to Notes', 'Ctrl+2', () => go('notes')]
+  ['notes', 'Go to Notes', 'Ctrl+2', () => go('notes')],
+  ['search', 'Search notes and chats', 'Ctrl+K', () => openPalette()],
+  ['voice', 'Dictate with Windows voice typing', 'Alt+V', () => dictate()],
+  ['summon', 'Show or hide Rook, from any app', 'Ctrl+Alt+Space', () => {}], // these two are registered system-wide by the main process
+  ['capture', 'Send highlighted text to today’s note, from any app', 'Ctrl+Alt+C', () => {}]
 ];
+function dictate() { if (S.mini === 'bar') $('compact-input').focus(); else $('ask').focus(); VA.voice(); }
 const keyOf = (action) => (S.cfg?.keys || {})[action] || SHORTCUTS.find((x) => x[0] === action)[2];
 const keyHint = (action) => keyOf(action).split('+').join(' ');
 // The combination a key press stands for, e.g. "Ctrl+Shift+K"; null while only modifier keys are down.
 function comboOf(e) {
   if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return null;
-  const key = /^Key[A-Z]$/.test(e.code) ? e.code.slice(3) : /^Digit\d$/.test(e.code) ? e.code.slice(5) : e.key.length === 1 ? e.key.toUpperCase() : e.key;
-  return [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', key].filter(Boolean).join('+');
+  const key = /^Key[A-Z]$/.test(e.code) ? e.code.slice(3) : /^Digit\d$/.test(e.code) ? e.code.slice(5) : e.key === ' ' ? 'Space' : e.key.length === 1 ? e.key.toUpperCase() : e.key;
+  return [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Win', key].filter(Boolean).join('+');
 }
 let recording = null; // the shortcut being changed in Settings, if any
 function shortcutRows(onChange) {
@@ -709,7 +796,7 @@ function shortcutRows(onChange) {
       if (recording) recording.cancel();
       btn.classList.add('rec'); btn.replaceChildren('Press keys…');
       recording = { cancel: () => { recording = null; show(); }, take: (combo) => {
-        if (!/^(Ctrl|Alt)\+/.test(combo) && !/^(Shift\+)?F\d{1,2}$/.test(combo)) return toast('Use Ctrl or Alt with a key, or a function key.', { error: true });
+        if (!/(^|\+)(Ctrl|Alt|Win)\+/.test(combo) && !/^(Shift\+)?F\d{1,2}$/.test(combo)) return toast('Use Ctrl, Alt or the Windows key with another key, or a function key.', { error: true });
         const clash = SHORTCUTS.find(([a]) => a !== action && keyOf(a) === combo);
         if (clash) return toast(`${combo.split('+').join(' ')} is already used by “${clash[1]}”.`, { error: true });
         recording = null;
@@ -728,12 +815,14 @@ function shortcutRows(onChange) {
 // ---------- wiring ----------
 function paintTools() {
   $('topbar-tools').replaceChildren(h('span', { id: 'upd-pill' }), tool('plus', 'New conversation', newChat, { title: `New conversation (${keyHint('newChat')})` }),
+    tool('search', 'Search', openPalette, { title: `Search notes and chats (${keyHint('search')})` }),
     tool('chat', 'Side chat', () => setMini('panel'), { title: 'Side chat' }),
     tool('compact', 'Quick-capture bar', () => setMini('bar'), { title: 'Quick-capture bar' }),
     tool('settings', 'Settings', () => go('settings'), { title: `Settings (${keyHint('settings')})` }));
   $('compact-expand').replaceChildren(tool('chat', 'Side chat', () => setMini('panel'), { title: 'Show the chat' }),
     tool('expand', 'Return to window', () => setMini(false), { title: `Return to window (${keyHint('mini')})` }));
-  $('panel-tools').replaceChildren(tool('plus', 'New conversation', newChat, { title: `New conversation (${keyHint('newChat')})` }),
+  $('panel-tools').replaceChildren(tool('clock', 'Saved chats', () => { if (S.streaming) return toast('Wait for the reply to finish, or stop it first.'); S.plist = !(S.plist && !S.cur); S.cur = null; go('home'); }, { title: 'Saved chats' }),
+    tool('plus', 'New conversation', newChat, { title: `New conversation (${keyHint('newChat')})` }),
     tool('compact', 'Quick-capture bar', () => setMini('bar'), { title: 'Shrink to a bar' }),
     tool('expand', 'Return to window', () => setMini(false), { title: `Return to window (${keyHint('mini')})` }));
   paintUpdate();
@@ -743,13 +832,21 @@ function wire() {
   $('compact-mark').append(mark('compact-mark'));
   $('go-home').addEventListener('click', () => go('home'));
   $('panel-mark').append(mark());
+  $('attach-slot').append(tool('clip', 'Attach files', () => $('file-pick').click(), { title: 'Attach files or screenshots (or drop or paste them here)' }));
+  $('mic-slot').append(tool('mic', 'Dictate', dictate, { title: 'Dictate with Windows voice typing' }));
+  $('file-pick').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
+  // Files dropped anywhere on the window, or pasted into the ask box, become attachments.
+  document.addEventListener('dragover', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  document.addEventListener('drop', (e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); addFiles(e.dataTransfer.files); } });
+  $('ask').addEventListener('paste', (e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } });
+  document.addEventListener('mousedown', (e) => { if (popKind && !e.target.closest('#ask-pop, .hint-btn, #ask')) closePop(); });
   $('win-min').addEventListener('click', () => VA.win.minimize());
   $('win-max').addEventListener('click', () => VA.win.maximize());
   $('win-close').addEventListener('click', () => VA.win.close());
 
   const ask = $('ask');
-  ask.addEventListener('input', () => { autogrow(); paintAsk(); });
-  ask.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(ask.value); } });
+  ask.addEventListener('input', () => { autogrow(); paintAsk(); updateSlash(ask.value); });
+  ask.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!trySlash(ask.value)) send(ask.value); } });
   const ci = $('compact-input');
   ci.addEventListener('input', paintAsk);
   ci.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); send(ci.value); } });
@@ -762,6 +859,7 @@ function wire() {
       if (combo) recording.take(combo);
       return;
     }
+    if (overlayKey(e)) { e.preventDefault(); e.stopPropagation(); return; }
     const combo = comboOf(e);
     const hit = combo && SHORTCUTS.find(([a]) => keyOf(a) === combo);
     if (hit) { e.preventDefault(); hit[3](); }
@@ -775,8 +873,12 @@ function wire() {
   S.cfg = await VA.getConfig();
   S.version = await VA.version().catch(() => '');
   S.update = await VA.update.get().catch(() => S.update);
+  applyTheme();
+  matchMedia('(prefers-color-scheme: light)').addEventListener('change', applyTheme);
   paintTools();
   VA.update.onStatus(onUpdate);
+  VA.onSummon(() => setTimeout(focusAsk, 60));
+  VA.onSchedule((ev) => { toast(`${ev.title}${ev.body ? ': ' + ev.body : ''}`); loadNotes(); });
   S.chats = (await VA.loadChats()) || [];
   for (const c of S.chats) for (const m of c.msgs) if (m.role === 'bot' && !m.done) { m.done = true; m.stopped = true; }
   await loadNotes();

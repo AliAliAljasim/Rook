@@ -1,7 +1,18 @@
 // The Map: a force-directed graph of notes (dots) and [[links]] (lines), drawn on a canvas.
 // Pan by dragging the background, zoom with the wheel, drag a dot to move it, click a dot to select it.
 (function () {
-  const ACCENT = '#E0A458', FG = '#EEE8DF', NODE = '#8F887E', ORPHAN = '#5A554E';
+  // Colours come from the stylesheet's variables, so the map follows the light or dark theme.
+  let palKey = null, pal = null;
+  function colours() {
+    const key = document.documentElement.dataset.theme || 'dark';
+    if (key === palKey) return pal;
+    const cs = getComputedStyle(document.documentElement), v = (n) => cs.getPropertyValue(n).trim();
+    const fgRgb = key === 'light' ? '42,38,34' : '238,232,223';
+    palKey = key;
+    pal = { accent: v('--accent'), fg: v('--fg'), node: v('--graph-node'), orphan: v('--graph-orphan'),
+      edgeOn: `rgba(${v('--accent-rgb')},.7)`, edge: `rgba(${v('--ov')},${key === 'light' ? .2 : .11})`, edgeDim: `rgba(${v('--ov')},${key === 'light' ? .07 : .035})`, label: `rgba(${fgRgb},.72)` };
+    return pal;
+  }
 
   function create(canvas, data, opts) {
     const ctx = canvas.getContext('2d');
@@ -61,12 +72,13 @@
       ctx.clearRect(0, 0, w, h);
       ctx.translate(tx, ty); ctx.scale(scale, scale);
       const focus = hover || selected;
+      const C = colours(), ACCENT = C.accent, FG = C.fg, NODE = C.node, ORPHAN = C.orphan;
       const lit = (d) => !focus || d === focus || focus.nb.has(d.i);
       const match = (d) => !filter || d.title.toLowerCase().includes(filter);
       ctx.lineWidth = 1 / scale;
       for (const [a, b] of edges) {
         const on = focus && (a === focus || b === focus);
-        ctx.strokeStyle = on ? 'rgba(224,164,88,.7)' : focus || (filter && !(match(a) && match(b))) ? 'rgba(255,255,255,.035)' : 'rgba(255,255,255,.11)';
+        ctx.strokeStyle = on ? C.edgeOn : focus || (filter && !(match(a) && match(b))) ? C.edgeDim : C.edge;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
       }
       for (const d of nodes) {
@@ -83,7 +95,7 @@
       for (const d of nodes) {
         const show = focus ? (d === focus || focus.nb.has(d.i)) : filter ? match(d) : (scale > 1.25 || d.deg >= 4 || n <= 40);
         if (!show) continue;
-        ctx.fillStyle = d === focus ? FG : 'rgba(238,232,223,.72)';
+        ctx.fillStyle = d === focus ? FG : C.label;
         const t = d.title.length > 30 ? d.title.slice(0, 29) + '…' : d.title;
         ctx.fillText(t, d.x, d.y + d.r / Math.sqrt(scale) + 5 / scale);
       }

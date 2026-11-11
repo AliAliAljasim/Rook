@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
 <link rel="stylesheet" href="style.css">
+<script src="theme.js"></script>
 </head>
 <body>
 <!-- STARTUP: the book draws itself, its ribbon drops in and lines are written while the vault loads; then the screen turns like a page. -->
@@ -51,12 +52,16 @@
   </div>
 
   <footer class="askbar" id="askbar">
+    <div class="ask-pop-anchor"><div class="ask-pop hidden" id="ask-pop"></div></div>
     <div class="ask-row">
       <div class="ask-field">
         <div id="ask-ctx-slot"></div>
+        <div class="ask-files" id="ask-files"></div>
         <div class="ask-line">
+          <span id="attach-slot"></span>
           <label class="sr" for="ask">Message</label>
           <textarea id="ask" rows="1" placeholder="Ask about your vault, or tell Rook what to write…"></textarea>
+          <span id="mic-slot"></span>
           <span id="send-slot"></span>
         </div>
       </div>
@@ -66,6 +71,8 @@
 </div>
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="modal-layer hidden" id="modal-layer"></div>
+<input type="file" id="file-pick" class="hidden" multiple>
 
 <!-- COMPACT: when the window shrinks to a strip (Ctrl M), only this shows. -->
 <div class="compact" id="compact">
@@ -79,6 +86,7 @@
 <script src="icons.js"></script>
 <script src="markdown.js"></script>
 <script src="graph.js"></script>
+<script src="features.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>
