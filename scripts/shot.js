@@ -85,13 +85,11 @@ app.whenReady().then(async () => {
   await js(`[...document.querySelectorAll('#view-home .row')].find(b=>b.textContent.includes('Atlas: what')).click()`); await wait(300);
   await js(`document.getElementById('scroller').scrollTop = 0`); await shot('2-chat');
   await js(`document.getElementById('scroller').scrollTop = 99999`); await shot('3-chat-bottom');
-  await js(`[...document.querySelectorAll('#topnav button')][1].click()`); await shot('4-notes-empty');
-  await js(`window.__open = [...document.querySelectorAll('.tree-item')].find(b=>b.textContent.includes('Projects')); window.__open.click()`); await wait(200);
-  await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.includes('Atlas')&&!b.classList.contains('tree-folder')||b.textContent.startsWith('Atlas')).click()`); await wait(300);
-  await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.trim()==='Atlas launch plan')?.click()`); await wait(500); await shot('5-note');
-  await js(`document.getElementById('reader').scrollTop = 99999`); await shot('6-note-bottom');
-  await js(`[...document.querySelectorAll('#topnav button')][2].click()`); await wait(4500); await shot('7-map');
-  await js(`[...document.querySelectorAll('#topnav button')][3].click()`); await shot('8-history');
+  await js(`[...document.querySelectorAll('#topnav button')][1].click()`); await wait(4500); await shot('4-notes-map');
+  await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.includes('Projects')).click()`); await wait(200);
+  await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.startsWith('Atlas')).click()`); await wait(300);
+  await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.trim()==='Atlas launch plan').click()`); await wait(500); await shot('5-note');
+  await js(`[...document.querySelectorAll('.note-acts button')].find(b=>b.textContent.includes('Show on map')).click()`); await wait(1500); await shot('6-show-on-map');
   await js(`{const i=document.getElementById('search-input'); i.value='atlas'; i.dispatchEvent(new Event('input'))}`); await wait(400); await shot('9-search');
   await js(`{const i=document.getElementById('search-input'); i.value=''; i.dispatchEvent(new Event('input')); document.querySelector('button[aria-label="Settings"]').click()}`); await wait(400); await shot('10-settings');
   w.setMinimumSize(366, 72); w.setSize(366, 72); await shot('11-compact');

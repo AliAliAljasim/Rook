@@ -22,7 +22,7 @@ const pill = (cls, label, onClick, ic) => h('button', { type: 'button', cls, onC
 const S = {
   cfg: null, recent: [], all: [], names: new Set(), noteCount: 0, chats: [], cur: null,
   view: 'home', prevView: 'home', streaming: false, mini: false,
-  note: null, noteCtx: true, treeOpen: new Set(), treeFilter: '',
+  note: null, noteCtx: true, pane: 'map', treeOpen: new Set(), treeFilter: '',
   graph: null, graphStale: true, map: null, mapSel: null, mapFilter: '',
   chatFilter: '', chatTab: 'all', renaming: null, query: '', version: ''
 };
@@ -92,9 +92,10 @@ async function openNote(nameOrFile) {
     let acc = '';
     for (const part of S.note.folder.split('/').filter(Boolean)) { acc += part + '/'; S.treeOpen.add(acc); }
     if ($('search-input').value) { $('search-input').value = ''; S.query = ''; }
+    S.pane = 'note';
     go('notes');
     $('reader').scrollTop = 0;
-    ensureGraph().then(() => { if (S.view === 'notes') paintReader(); });
+    ensureGraph().then(() => { if (S.view === 'notes' && S.pane === 'note') paintReader(); });
   } catch (e) { toast('That note could not be opened.', { error: true }); }
 }
 async function ensureGraph() {
@@ -190,7 +191,7 @@ VA.onEvent(onEvent);
 function send(text) {
   text = String(text || '').trim();
   if (!text || S.streaming) return;
-  const about = S.view === 'notes' && S.note && S.noteCtx ? S.note : null;
+  const about = S.view === 'notes' && S.pane === 'note' && S.note && S.noteCtx ? S.note : null;
   if (!S.cur) {
     S.cur = { id: 'c' + Date.now(), title: text.length > 44 ? text.slice(0, 43) + '…' : text, when: Date.now(), pinned: false, sessionId: null, msgs: [] };
     S.chats.unshift(S.cur);
@@ -246,17 +247,13 @@ function paintHome() {
     ['align', 'Summarize a project', 'Gather what is still open in a project.', 'Summarize the project '],
     ['eye', 'Make observations', 'Spot patterns in this week’s notes.', 'Make observations about this week’s notes.']
   ];
-  const chats = S.chats.slice().sort((a, b) => (b.pinned - a.pinned) || (b.when - a.when)).slice(0, 4);
   $('view-home').replaceChildren(
     h('section', { cls: 'hero' }, h('h1', { text: `Good ${part}, ${S.cfg.name}.` }),
       h('p', { text: `${num(S.noteCount)} notes in ${S.cfg.vaultName}. What should we work on?` })),
     h('div', { cls: 'quick-grid' }, quick.map(([ic, t, d, fill]) =>
       h('button', { type: 'button', cls: 'quick', onClick: () => { $('ask').value = fill; autogrow(); paintAsk(); focusAsk(); } },
         h('span', { cls: 'quick-icon' }, icon(ic, 'sm')), h('span', { cls: 'quick-title', text: t }), h('span', { cls: 'quick-desc', text: d })))),
-    h('section', { cls: 'sec' },
-      h('div', { cls: 'sec-head' }, h('h2', { text: 'Recent chats' }), h('button', { type: 'button', cls: 'sec-link', onClick: () => go('history') }, `All ${S.chats.length}`)),
-      h('div', { cls: 'rows' }, chats.length ? chats.map((c) => row('chat', c.title, chatPreview(c), chatMeta(c.when), () => openChat(c), { pinned: c.pinned }))
-        : h('p', { cls: 'empty', text: 'Conversations you have with Rook appear here.' }))));
+    h('section', { cls: 'sec' }, ...historyNodes()));
 }
 
 // ---------- CHAT ----------
@@ -342,8 +339,9 @@ function paintTree() {
   if (!$('tree-tools').firstChild) {
     const inp = h('input', { type: 'search', placeholder: 'Filter notes', 'aria-label': 'Filter notes', autocomplete: 'off', spellcheck: 'false' });
     inp.addEventListener('input', () => { S.treeFilter = inp.value; paintTree(); });
-    $('tree-tools').append(h('label', { cls: 'filter' }, icon('search', 'sm'), inp));
+    $('tree-tools').append(h('label', { cls: 'filter' }, icon('search', 'sm'), inp), h('div', { id: 'pane-seg' }));
   }
+  $('pane-seg').replaceChildren(seg([['note', 'Note'], ['map', 'Map']], S.pane, (v) => { S.pane = v; paintTree(); paintPane(); }, 'Show'));
   const noteItem = (n, depth) => h('button', { type: 'button', cls: 'tree-item' + (S.note?.file === n.file ? ' on' : ''), style: `padding-left:${8 + depth * 16}px`, title: n.file, onClick: () => openNote(n.file) },
     icon('file', 'sm'), h('span', { text: n.title }));
   const out = [];
@@ -400,12 +398,18 @@ function paintReader() {
   $('reader').scrollTop = top;
 }
 
-// ---------- MAP ----------
+// ---------- MAP (the other face of the Notes page) ----------
+function paintPane() {
+  $('reader').classList.toggle('hidden', S.pane !== 'note');
+  $('map-pane').classList.toggle('hidden', S.pane !== 'map');
+  if (S.pane === 'note') paintReader(); else paintMap();
+  paintAsk();
+}
 async function paintMap() {
-  const host = $('view-map');
+  const host = $('map-pane');
   if (S.map && !S.graphStale) return;
   const data = await ensureGraph();
-  if (S.view !== 'map') return;
+  if (S.view !== 'notes' || S.pane !== 'map') return;
   if (S.map) { S.map.destroy(); S.map = null; }
   S.mapSel = null;
   if (!data.nodes.length) { host.replaceChildren(h('div', { cls: 'map-empty' }, h('h2', { text: 'Nothing to map yet' }), h('p', { text: 'Notes appear here as dots; [[links]] between them appear as lines.' }))); return; }
@@ -426,24 +430,24 @@ async function paintMap() {
   S.map = window.RookGraph.create(canvas, data, { onSelect: paintCard, onOpen: (id) => openNote(id) });
   filter.addEventListener('input', () => S.map.setFilter(filter.value));
 }
-async function showOnMap(file) { go('map'); await paintMap(); if (S.map) S.map.select(file); }
+async function showOnMap(file) { S.pane = 'map'; go('notes'); await paintMap(); if (S.map) S.map.select(file); }
 
-// ---------- HISTORY ----------
+// ---------- CHAT LIST (on the Chat home page) ----------
 function seg(opts, value, onPick, label) {
   return h('div', { cls: 'segmented', role: 'group', 'aria-label': label }, opts.map(([v, l]) =>
     h('button', { type: 'button', cls: v === value ? 'on' : '', 'aria-pressed': String(v === value), onClick: () => onPick(v) }, l)));
 }
-function paintHistory() {
+function historyNodes() {
   const q = S.chatFilter.toLowerCase();
   let list = S.chats.filter((c) => !q || c.title.toLowerCase().includes(q) || c.msgs.some((m) => (m.text || (m.blocks || []).map((b) => b.text || '').join(' ')).toLowerCase().includes(q)));
   if (S.chatTab === 'pinned') list = list.filter((c) => c.pinned);
   if (S.chatTab === 'week') list = list.filter((c) => chatGroup(c.when) !== 'Earlier');
   list.sort((a, b) => b.when - a.when);
   const filter = h('input', { type: 'search', id: 'hist-filter', placeholder: 'Filter by title or text', 'aria-label': 'Filter saved chats', value: S.chatFilter, autocomplete: 'off' });
-  filter.addEventListener('input', () => { S.chatFilter = filter.value; const pos = filter.selectionStart; paintHistory(); const f = $('hist-filter'); f.focus(); f.setSelectionRange(pos, pos); });
-  const out = [h('h1', { cls: 'page-title', text: 'Saved chats' }),
+  filter.addEventListener('input', () => { S.chatFilter = filter.value; const pos = filter.selectionStart; paintHome(); const f = $('hist-filter'); f.focus(); f.setSelectionRange(pos, pos); });
+  const out = [h('div', { cls: 'sec-head' }, h('h2', { text: 'Chats' })),
     h('div', { cls: 'list-tools' }, h('label', { cls: 'filter' }, icon('search', 'sm'), filter),
-      seg([['all', 'All'], ['pinned', 'Pinned'], ['week', 'This week']], S.chatTab, (v) => { S.chatTab = v; paintHistory(); }, 'Show'),
+      seg([['all', 'All'], ['pinned', 'Pinned'], ['week', 'This week']], S.chatTab, (v) => { S.chatTab = v; paintHome(); }, 'Show'),
       h('span', { cls: 'list-note', text: `${S.chats.length} saved · ${S.chats.filter((c) => c.pinned).length} pinned` }))];
   for (const label of ['Today', 'This week', 'Earlier']) {
     const items = list.filter((c) => chatGroup(c.when) === label);
@@ -451,13 +455,13 @@ function paintHistory() {
     out.push(h('div', { cls: 'group-label', text: label }), h('div', { cls: 'rows' }, items.map(chatRow)));
   }
   if (!list.length) out.push(h('p', { cls: 'empty', text: S.chats.length ? 'No chats match.' : 'No saved chats yet. Start a conversation and it will appear here.' }));
-  $('view-history').replaceChildren(...out);
+  return out;
 }
 function chatRow(c) {
   if (S.renaming === c.id) {
     const inp = h('input', { cls: 'rename', value: c.title, 'aria-label': 'Rename chat' });
-    const commit = () => { if (S.renaming !== c.id) return; c.title = inp.value.trim() || c.title; S.renaming = null; persist(); paintHistory(); };
-    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { S.renaming = null; paintHistory(); } });
+    const commit = () => { if (S.renaming !== c.id) return; c.title = inp.value.trim() || c.title; S.renaming = null; persist(); paintHome(); };
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { S.renaming = null; paintHome(); } });
     inp.addEventListener('blur', commit);
     setTimeout(() => { inp.focus(); inp.select(); }, 0);
     return h('div', { style: 'padding:9px 12px' }, inp);
@@ -465,10 +469,10 @@ function chatRow(c) {
   return h('div', { cls: 'row-wrap' },
     row('chat', c.title, chatPreview(c), chatMeta(c.when), () => openChat(c), { pinned: c.pinned }),
     h('div', { cls: 'row-acts' },
-      tool('pin', c.pinned ? 'Unpin ' + c.title : 'Pin ' + c.title, () => { c.pinned = !c.pinned; persist(); paintHistory(); }, { title: c.pinned ? 'Unpin' : 'Pin', on: c.pinned }),
-      tool('pen', 'Rename ' + c.title, () => { S.renaming = c.id; paintHistory(); }, { title: 'Rename' }),
+      tool('pin', c.pinned ? 'Unpin ' + c.title : 'Pin ' + c.title, () => { c.pinned = !c.pinned; persist(); paintHome(); }, { title: c.pinned ? 'Unpin' : 'Pin', on: c.pinned }),
+      tool('pen', 'Rename ' + c.title, () => { S.renaming = c.id; paintHome(); }, { title: 'Rename' }),
       tool('trash', 'Delete ' + c.title, () => {
-        const idx = S.chats.indexOf(c); S.chats.splice(idx, 1); if (S.cur === c) S.cur = null; persist(); paintHistory();
+        const idx = S.chats.indexOf(c); S.chats.splice(idx, 1); if (S.cur === c) S.cur = null; persist(); paintHome();
         toast('Chat deleted.', { action: 'Undo', onAction: () => { S.chats.splice(idx, 0, c); persist(); paint(); } });
       }, { title: 'Delete' })));
 }
@@ -514,7 +518,7 @@ async function paintSettings() {
   };
   paintScope();
   const card = (id, title, ...kids) => h('section', { cls: 'settings-card', id }, h('h2', { text: title }), ...kids);
-  const keys = [['New conversation', ['Ctrl', 'N']], ['Search', ['Ctrl', 'K']], ['Quick-capture strip', ['Ctrl', 'M']], ['Settings', ['Ctrl', ',']], ['Chat · Notes · Map · History', ['Ctrl', '1–4']], ['Send', ['Enter']], ['New line', ['Shift', 'Enter']], ['Stop a reply', ['Esc']]];
+  const keys = [['New conversation', ['Ctrl', 'N']], ['Search', ['Ctrl', 'K']], ['Quick-capture strip', ['Ctrl', 'M']], ['Settings', ['Ctrl', ',']], ['Chat · Notes', ['Ctrl', '1–2']], ['Send', ['Enter']], ['New line', ['Shift', 'Enter']], ['Stop a reply', ['Esc']]];
   const secs = [['set-vault', 'Vault'], ['set-access', 'Access'], ['set-assistant', 'Assistant'], ['set-keys', 'Keyboard shortcuts'], ['set-about', 'About']];
   const nav = h('nav', { cls: 'settings-nav', 'aria-label': 'Settings categories' }, secs.map(([id, l], i) =>
     h('button', { type: 'button', cls: i ? '' : 'on', onClick: (e) => { nav.querySelectorAll('button').forEach((b) => b.classList.remove('on')); e.currentTarget.classList.add('on'); $(id).scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, l)));
@@ -550,7 +554,7 @@ function paintAsk() {
   $('askbar').classList.toggle('hidden', S.view === 'settings');
   $('askbar').classList.toggle('busy', S.streaming);
   $('send-slot').replaceChildren(sendBtn($('ask').value, () => send($('ask').value)));
-  const ctx = S.view === 'notes' && S.note && S.noteCtx;
+  const ctx = S.view === 'notes' && S.pane === 'note' && S.note && S.noteCtx;
   $('ask-ctx-slot').replaceChildren(...(ctx ? [h('span', { cls: 'ask-ctx' }, icon('file', 'sm'), h('span', { text: `About: ${S.note.title}` }),
     h('button', { type: 'button', 'aria-label': 'Ask without this note', title: 'Ask without this note', onClick: () => { S.noteCtx = false; paintAsk(); } }, icon('x', 'sm')))] : []));
   $('ask-hint').textContent = S.cfg.readScope === 'vault' ? 'Reads only inside your vault · writes only inside your vault' : 'Reads anywhere on this PC · writes only inside your vault';
@@ -563,7 +567,7 @@ function paintAsk() {
 function toggleMini() { S.mini = !S.mini; VA.win.mini(S.mini); paintAsk(); setTimeout(focusAsk, 60); }
 
 // ---------- navigation ----------
-const NAV = [['home', 'Chat'], ['notes', 'Notes'], ['map', 'Map'], ['history', 'History']];
+const NAV = [['home', 'Chat'], ['notes', 'Notes']];
 function go(view) {
   if (view !== S.view && S.view !== 'search' && S.view !== 'settings') S.prevView = S.view;
   S.view = view; paint();
@@ -574,9 +578,7 @@ function paint() {
   $('topnav').replaceChildren(...NAV.map(([v, l]) => h('button', { type: 'button', cls: S.view === v ? 'on' : '', 'aria-current': S.view === v ? 'page' : null, onClick: () => go(v) }, l)));
   if (el === 'view-home') paintHome();
   else if (el === 'view-chat') paintChat();
-  else if (S.view === 'notes') { paintTree(); paintReader(); }
-  else if (S.view === 'map') paintMap();
-  else if (S.view === 'history') paintHistory();
+  else if (S.view === 'notes') { paintTree(); paintPane(); }
   else if (S.view === 'search') paintSearch();
   else if (S.view === 'settings') paintSettings();
   paintAsk();
@@ -589,7 +591,7 @@ async function loadNotes() {
     const sig = all.length + ':' + all.reduce((a, n) => a + n.mtimeMs, 0);
     if (sig !== S.noteSig) { S.noteSig = sig; S.graphStale = true; }
   } catch { /* the vault may be unavailable; keep what we have */ }
-  if (S.view === 'home' && !(S.cur && S.cur.msgs.length)) paintHome();
+  if (S.view === 'home' && !(S.cur && S.cur.msgs.length)) { if (!$('view-home').contains(document.activeElement)) paintHome(); }
   else if (S.view === 'notes') paintTree();
 }
 
@@ -634,7 +636,7 @@ function wire() {
     else if (e.ctrlKey && k === 'k') { e.preventDefault(); si.focus(); si.select(); }
     else if (e.ctrlKey && k === 'm') { e.preventDefault(); toggleMini(); }
     else if (e.ctrlKey && k === ',') { e.preventDefault(); go('settings'); }
-    else if (e.ctrlKey && /^[1-4]$/.test(k)) { e.preventDefault(); go(NAV[Number(k) - 1][0]); }
+    else if (e.ctrlKey && /^[1-2]$/.test(k)) { e.preventDefault(); go(NAV[Number(k) - 1][0]); }
     else if (e.key === 'Escape' && S.streaming && document.activeElement !== si) stop();
   });
 }

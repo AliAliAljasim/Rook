@@ -3,10 +3,8 @@ A note-taking assistant for an Obsidian vault. Electron app (Windows) -> `wsl.ex
 Writes are allowed only inside the vault; everything else is read-only.
 
 ## What it does
-- **Chat**: ask about the vault or tell Rook what to write. Replies render as markdown; edited notes show as chips.
-- **Notes**: a folder tree and a read-only markdown viewer (frontmatter, callouts, nested lists, tables, wiki-links, linked notes).
-- **Map**: a graph of notes (dots) and `[[links]]` (lines). Drag, zoom, click a dot, double-click to open.
-- **History**: saved chats (pin, rename, delete with undo). Stored locally in the app's userData folder.
+- **Chat**: ask about the vault or tell Rook what to write. Replies render as markdown; edited notes show as chips. The Chat home page lists saved chats (filter, pin, rename, delete with undo), stored locally in the app's userData folder.
+- **Notes**: a folder tree with a Note/Map toggle. Note is a read-only markdown viewer (frontmatter, callouts, nested lists, tables, wiki-links, linked notes). Map is a graph of notes (dots) and `[[links]]` (lines): drag, zoom, click a dot, double-click to open.
 - **Quick-capture strip**: Ctrl M shrinks the window to an always-on-top strip.
 
 ## Design

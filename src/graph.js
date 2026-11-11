@@ -163,7 +163,7 @@
       select(id) {
         const d = nodes.find((x) => x.id === id) || null;
         selected = d; opts.onSelect && opts.onSelect(d ? info(d) : null);
-        if (d) { userMoved = true; scale = Math.max(scale, 1.3); tx = w / 2 - d.x * scale; ty = h / 2 - d.y * scale; }
+        if (d) { fit(); userMoved = true; scale = Math.min(1.6, Math.max(scale, 1.15)); tx = w / 2 - d.x * scale; ty = h / 2 - d.y * scale; }
         draw();
       },
       settle() { for (let k = 0; k < 260; k++) tick(); alpha = 0; fit(); draw(); },
