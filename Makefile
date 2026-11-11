@@ -1,7 +1,10 @@
-.PHONY: help install start check dist clean
+.PHONY: help login install start check dist clean
 
 help:        ## list targets
 	@grep -E '^[a-z]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/ -/'
+
+login:       ## sign in to Claude Code (same as /login)
+	claude auth login
 
 install:     ## install npm dependencies
 	npm install
