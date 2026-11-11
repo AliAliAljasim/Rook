@@ -1,0 +1,25 @@
+{
+  "name": "vault-assistant",
+  "productName": "Vault Assistant",
+  "version": "0.1.0",
+  "description": "Note-taking agent: Claude Code (WSL) with write access only to the Obsidian vault",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.alijas.vaultassistant",
+    "files": ["src/**/*", "package.json"],
+    "win": { "target": "nsis" },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "vault-assistant-setup-${version}.${ext}"
+    }
+  }
+}
