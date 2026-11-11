@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('api', {
   onEvent: (cb) => ipcRenderer.on('chat:event', (_, ev) => cb(ev)),
   getConfig: inv('config:get'), setConfig: inv('config:set'), pickFolder: inv('dialog:pickFolder'),
   vaultInfo: inv('vault:info'), recentNotes: inv('vault:recent'), searchNotes: inv('vault:search'),
+  listNotes: inv('vault:list'), graph: inv('vault:graph'), resolveNote: inv('note:resolve'), readNote: inv('note:read'), version: inv('app:version'),
   openNote: inv('note:open'), openExternal: inv('ext:open'),
   saveNote: inv('note:save'), undoCreate: inv('note:undoCreate'),
   loadChats: inv('chats:load'), saveChats: inv('chats:save'),

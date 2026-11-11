@@ -1,18 +1,86 @@
 <!doctype html>
-<html lang="en" data-theme="paper">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Rook</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
-<link rel="stylesheet" href="tokens.css">
-<link rel="stylesheet" href="components.css">
-<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="app"></div>
+<!-- STARTUP: the ring turns around the book until the vault is ready, then the screen swipes up (as in Groove). -->
+<div class="splash" id="splash" aria-hidden="true">
+  <div class="splash-mark">
+    <div class="splash-disc">
+      <svg viewBox="0 0 256 256"><defs><radialGradient id="splash-v" cx="40%" cy="28%" r="85%"><stop offset="0" stop-color="#2F2B27"/><stop offset="1" stop-color="#131211"/></radialGradient></defs><circle cx="128" cy="128" r="114" fill="url(#splash-v)" stroke="#2A2622" stroke-width="10"/><circle cx="128" cy="128" r="98" fill="none" stroke="#2A2622" stroke-width="2"/><circle cx="128" cy="128" r="84" fill="none" stroke="#2A2622" stroke-width="2"/></svg>
+      <svg class="splash-ring" viewBox="0 0 256 256"><circle cx="128" cy="128" r="114" fill="none" stroke="#E0A458" stroke-width="10" stroke-linecap="round" stroke-dasharray="250 466"/></svg>
+      <span class="splash-sheen"></span>
+      <svg class="splash-book" viewBox="0 0 32 32"><rect x="4.5" y="3" width="23" height="26" rx="2.5" fill="#1f1e1d" stroke="#e0a458" stroke-width="1.8"/><path d="M19.24 2.1h5.06v12.61l-2.53-2.3-2.53 2.3z" fill="#e0a458"/><path d="M9 20.6h8.97M9 24.4h5.52" stroke="#f8f7f5" stroke-width="1.9" stroke-linecap="round"/></svg>
+    </div>
+    <span class="splash-word">rook</span>
+  </div>
+</div>
+
+<div class="app" id="app">
+  <header class="topbar">
+    <button class="brand" id="go-home" aria-label="Home"><span id="brand-mark"></span><span class="word">rook</span></button>
+    <nav class="topnav" id="topnav" aria-label="Sections"></nav>
+    <label class="search-box" id="search-box">
+      <span id="search-icon"></span>
+      <input type="search" id="search-input" placeholder="Search" aria-label="Search notes and chats" autocomplete="off" spellcheck="false">
+    </label>
+    <div class="topbar-tools" id="topbar-tools"></div>
+    <div class="window-controls">
+      <button id="win-min" aria-label="Minimize" title="Minimize"><svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><path d="M0 5.5h10"></path></svg></button>
+      <button id="win-max" aria-label="Maximize" title="Maximize"><svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><rect x=".5" y=".5" width="9" height="9"></rect></svg></button>
+      <button id="win-close" class="close" aria-label="Close" title="Close"><svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><path d="M0 0l10 10M10 0L0 10"></path></svg></button>
+    </div>
+  </header>
+
+  <!-- Only the pages scroll; the top bar and the ask bar stay put. -->
+  <div class="scroller" id="scroller">
+    <main class="view view-home" id="view-home"></main>
+    <main class="view view-chat" id="view-chat"></main>
+    <main class="view view-notes" id="view-notes">
+      <aside class="tree"><div class="tree-tools" id="tree-tools"></div><div class="tree-list" id="tree-list"></div></aside>
+      <section class="reader" id="reader"></section>
+    </main>
+    <main class="view view-map" id="view-map"></main>
+    <main class="view view-list" id="view-history"></main>
+    <main class="view view-list" id="view-search"></main>
+    <main class="view view-list" id="view-settings"></main>
+  </div>
+
+  <footer class="askbar" id="askbar">
+    <div class="ask-seek"></div>
+    <div class="ask-row">
+      <div class="ask-field">
+        <div id="ask-ctx-slot"></div>
+        <div class="ask-line">
+          <label class="sr" for="ask">Message</label>
+          <textarea id="ask" rows="1" placeholder="Ask about your vault, or tell Rook what to write…"></textarea>
+          <span id="send-slot"></span>
+        </div>
+      </div>
+    </div>
+    <p class="ask-hint" id="ask-hint"></p>
+  </footer>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<!-- COMPACT: when the window shrinks to a strip (Ctrl M), only this shows. -->
+<div class="compact" id="compact">
+  <span id="compact-mark"></span>
+  <div class="compact-meta"><span class="compact-status" id="compact-status" role="status">Quick capture</span><input type="text" id="compact-input" placeholder="Capture a note or ask…" aria-label="Message" autocomplete="off"></div>
+  <span id="compact-send"></span>
+  <span id="compact-expand"></span>
+  <div class="compact-seek"></div>
+</div>
+
 <script src="icons.js"></script>
 <script src="markdown.js"></script>
+<script src="graph.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>

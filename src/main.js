@@ -47,6 +47,52 @@ const noteView = (f) => {
   return { file: f.rel, title: f.rel.slice(i + 1).replace(/\.md$/i, ''), folder: i < 0 ? '' : f.rel.slice(0, i + 1), mtimeMs: f.mtimeMs };
 };
 
+// ---- link graph + note reading (read-only) -------------------------------------------
+const baseKey = (rel) => rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/i, '').toLowerCase();
+function noteIndex(files) {
+  const byBase = new Map(), byPath = new Map();
+  for (const f of files) {
+    byPath.set(f.rel.replace(/\.md$/i, '').toLowerCase(), f.rel);
+    const k = baseKey(f.rel), cur = byBase.get(k);
+    if (!cur || f.rel.length < cur.length) byBase.set(k, f.rel); // shortest path wins, like Obsidian
+  }
+  return (name) => {
+    const n = String(name).split('#')[0].split('|')[0].trim().replace(/\\/g, '/').replace(/\.md$/i, '').toLowerCase();
+    if (!n) return null;
+    return byPath.get(n) || byBase.get(n.slice(n.lastIndexOf('/') + 1)) || null;
+  };
+}
+let graphCache = { sig: '', data: null };
+function buildGraph(root) {
+  const files = walkVault(root);
+  const sig = root + '|' + files.length + '|' + files.reduce((a, f) => a + f.mtimeMs, 0);
+  if (graphCache.sig === sig) return graphCache.data;
+  const resolve = noteIndex(files);
+  const idx = new Map(files.map((f, i) => [f.rel, i]));
+  const seen = new Set(), edges = [];
+  const re = /\[\[([^\]\n]+)\]\]/g;
+  files.forEach((f, i) => {
+    let text;
+    try {
+      const abs = path.join(root, f.rel);
+      if (fs.statSync(abs).size > 1024 * 1024) return;
+      text = fs.readFileSync(abs, 'utf8');
+    } catch { return; }
+    let m;
+    while ((m = re.exec(text))) {
+      const to = resolve(m[1]);
+      if (!to) continue;
+      const j = idx.get(to);
+      if (j === i) continue;
+      const key = i < j ? i + ':' + j : j + ':' + i;
+      if (!seen.has(key)) { seen.add(key); edges.push([i, j]); }
+    }
+  });
+  const data = { nodes: files.map((f) => { const v = noteView(f); return { id: v.file, title: v.title, folder: v.folder }; }), edges };
+  graphCache = { sig, data };
+  return data;
+}
+
 const createdByApp = new Set(); // rel paths of notes this app created (so Undo can remove them)
 
 // ---- window ------------------------------------------------------------------------
@@ -54,7 +100,7 @@ let win, child, savedBounds = null;
 function createWindow() {
   win = new BrowserWindow({
     width: 980, height: 760, minWidth: 820, minHeight: 600, frame: false, title: 'Rook',
-    backgroundColor: '#f3f2f2', icon: path.join(__dirname, '..', 'build', 'icon.ico'),
+    backgroundColor: '#131211', icon: path.join(__dirname, '..', 'build', 'icon.ico'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
   win.setMenuBarVisibility(false);
@@ -106,6 +152,18 @@ ipcMain.handle('vault:search', (_, q) => {
     .sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, 8).map(noteView);
 });
 
+ipcMain.handle('vault:list', () => walkVault(loadCfg().vaultWin).map(noteView).sort((a, b) => a.file.localeCompare(b.file, undefined, { sensitivity: 'base', numeric: true })));
+ipcMain.handle('vault:graph', () => buildGraph(loadCfg().vaultWin));
+ipcMain.handle('note:resolve', (_, name) => noteIndex(walkVault(loadCfg().vaultWin))(name));
+ipcMain.handle('note:read', (_, rel) => {
+  const cfg = loadCfg();
+  if (!/\.md$/i.test(String(rel))) throw new Error('Only notes can be opened.');
+  const abs = resolveInside(cfg.vaultWin, String(rel)); // the viewer never reads outside the vault
+  const st = fs.statSync(abs);
+  if (st.size > 2 * 1024 * 1024) throw new Error('This note is too large to show.');
+  return { file: String(rel).replace(/\\/g, '/'), content: fs.readFileSync(abs, 'utf8'), mtimeMs: st.mtimeMs };
+});
+ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('note:open', (_, file) => {
   const name = vaultName(loadCfg());
   const f = String(file || '').replace(/\.md$/i, '');

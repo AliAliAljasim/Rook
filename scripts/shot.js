@@ -22,14 +22,55 @@ const chats = [
   { id: 'c2', title: 'Weekly review, week 45', when: now - 86400e3, pinned: false, msgs: [{ role: 'user', text: 'Make observations about this week’s notes.', time: '18:02' }, bot([{ t: 'text', text: 'Quiet week.' }])] },
   { id: 'c3', title: 'Lisbon trip notes', when: now - 20 * 86400e3, pinned: false, msgs: [{ role: 'user', text: 'Where did I write about Lisbon?', time: '20:41' }, bot([{ t: 'text', text: 'In Travel.' }])] }];
 const cfg = { vaultWin: 'C:\\Users\\alijas\\Documents\\Vault', claudePath: '/home/alijas/.local/bin/claude', readScope: 'machine', name: 'Ali', vaultName: 'Vault', vaultWsl: '/mnt/c/Users/alijas/Documents/Vault' };
-for (const [c, f] of Object.entries({ 'config:get': () => cfg, 'config:set': (_, x) => ({ ...cfg, ...x }), 'vault:recent': () => notes, 'vault:search': (_, q) => notes.filter((n) => n.title.toLowerCase().includes(String(q).toLowerCase())),
-  'vault:info': () => ({ ok: true, notes: 1284, folders: 96 }), 'chats:load': () => chats, 'chats:save': () => true, 'note:open': () => true }))
+const titles = ['Atlas launch plan', '1-1 with Sam', 'Budget', 'Checklist', 'Printer quote', 'Cover design', 'Web edition', 'Proof schedule', 'Research methods', 'Reading list', 'Weekly review W45', 'Weekly review W44', 'Lisbon trip', 'Packing list', 'Ideas', 'Typefaces', 'Announcement draft', 'Press contacts', 'Interview notes', 'Glossary', 'Inbox', 'Someday', 'Gift ideas', 'Recipes'];
+const folders = ['Projects/Atlas/', 'Meetings/', 'Projects/Atlas/', 'Projects/Atlas/', 'Projects/Atlas/', 'Projects/Atlas/', 'Projects/Atlas/', 'Projects/Atlas/', 'Reading/', 'Reading/', 'Reviews/', 'Reviews/', 'Travel/', 'Travel/', '', 'Reading/', 'Projects/Atlas/', 'Projects/Atlas/', 'Meetings/', '', '', '', '', ''];
+const all = titles.map((t, i) => ({ file: folders[i] + t + '.md', title: t, folder: folders[i], mtimeMs: now - i * 5 * 3600e3 }));
+all.unshift({ file: 'Daily/2026-11-11.md', title: '2026-11-11', folder: 'Daily/', mtimeMs: now });
+const E = [[1,2],[1,3],[1,4],[1,5],[1,6],[1,7],[1,8],[1,17],[1,18],[2,5],[2,8],[2,19],[5,3],[6,16],[7,16],[9,10],[9,16],[11,1],[11,12],[11,9],[13,14],[0,1],[0,2],[0,11],[15,1],[15,9],[18,19],[21,15]];
+const graph = { nodes: all.map((n) => ({ id: n.file, title: n.title, folder: n.folder })), edges: E };
+const noteText = `---
+tags: [atlas, launch]
+status: active
+owner: Ali
+---
+# Atlas launch plan
+
+The plan for shipping **Atlas**. Decided with [[1-1 with Sam]]: print first, then the [[Web edition]].
+
+> [!note] Decision
+> Ship the print edition first; the web edition follows once proofs are signed off.
+
+## Still open
+
+- Printer quote — waiting on a ==revised figure== from [[Printer quote]]
+  - follow up Friday
+  - compare against [[Budget]]
+- Cover typeface licence for the web, see [[Typefaces]] and [[Missing note]]
+- Launch date, pending \`proofs\` #atlas
+
+## This week
+
+- [x] Send final manuscript to the printer
+- [ ] Confirm proof dates with Sam
+
+| Item | Cost |
+| --- | --- |
+| Print run | 4,200 |
+| Proofs | 380 |
+
+![[cover-draft.png]]
+`;
+for (const [c, f] of Object.entries({ 'config:get': () => cfg, 'config:set': (_, x) => ({ ...cfg, ...x }), 'vault:recent': () => all.slice(0, 4), 'vault:list': () => all.slice().sort((a, b) => a.file.localeCompare(b.file)),
+  'vault:search': (_, q) => all.filter((n) => n.file.toLowerCase().includes(String(q).toLowerCase())).slice(0, 8), 'vault:graph': () => graph,
+  'note:resolve': (_, name) => (all.find((n) => n.title.toLowerCase() === String(name).toLowerCase()) || {}).file || null,
+  'note:read': (_, rel) => ({ file: rel, content: rel.includes('Atlas launch') ? noteText : '# ' + rel + '\n\nA short note that links to [[Atlas launch plan]].', mtimeMs: now - 2 * 3600e3 }),
+  'vault:info': () => ({ ok: true, notes: 1284, folders: 96 }), 'chats:load': () => chats, 'chats:save': () => true, 'note:open': () => true, 'app:version': () => '0.2.0' }))
   ipcMain.handle(c, f);
 ['chat:send', 'chat:cancel', 'clipboard:write', 'win:mini', 'win:minimize', 'win:maximize', 'win:close'].forEach((c) => ipcMain.on(c, () => {}));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
-  const w = new BrowserWindow({ width: 980, height: 760, frame: false, show: true, backgroundColor: '#f3f2f2',
+  const w = new BrowserWindow({ width: 980, height: 760, frame: false, show: true, backgroundColor: '#131211',
     webPreferences: { preload: path.join(__dirname, '../src/preload.js'), contextIsolation: true, sandbox: true } });
   const errors = [];
   w.webContents.on('console-message', (_e, lvl, msg) => { errors.push(lvl + ': ' + msg); });
@@ -37,16 +78,21 @@ app.whenReady().then(async () => {
   await w.loadFile(path.join(__dirname, '../src/index.html'));
   const shot = async (n) => { await wait(500); fs.writeFileSync(path.join(out, n + '.png'), (await w.webContents.capturePage()).toPNG()); };
   const js = (c) => w.webContents.executeJavaScript(c).catch((e) => { errors.push('js: ' + e.message); });
-  await shot('1-home'); if (errors.length) { console.log('ERRORS', errors.join('\n')); }
-  await js(`document.querySelector('.pr-side[title], .va-sidebar .pr-side:last-of-type');[...document.querySelectorAll('.va-sidebar .pr-side')].find(b=>b.textContent.includes('Atlas: what')).click()`);
-  await shot('2-chat');
-  await js(`document.querySelector('.va-pane__scroll').scrollTop = 99999`); await shot('3-chat-bottom');
-  await js(`document.querySelector('button[aria-label="Saved chats"]').click()`); await shot('4-chats');
-  await js(`document.querySelector('button[aria-label="Saved chats"]').click(); document.querySelector('button[aria-label="Search"]').click()`); await wait(300);
-  await js(`const i=document.getElementById('pal-q'); i.value='atlas'; i.dispatchEvent(new Event('input'))`); await shot('5-palette');
-  await js(`document.getElementById('pal-q').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); document.querySelector('button[aria-label="Settings"]').click()`); await shot('6-settings');
-  await js(`document.querySelector('dialog').close()`);
-  w.setSize(366, 72); await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'m',ctrlKey:true,bubbles:true}))`); await shot('7-mini');
+  await wait(450); await shot('0-splash');
+  await wait(1900); await shot('1-home');
+  await js(`[...document.querySelectorAll('#view-home .row')].find(b=>b.textContent.includes('Atlas: what')).click()`); await wait(300);
+  await js(`document.getElementById('scroller').scrollTop = 0`); await shot('2-chat');
+  await js(`document.getElementById('scroller').scrollTop = 99999`); await shot('3-chat-bottom');
+  await js(`[...document.querySelectorAll('#topnav button')][1].click()`); await shot('4-notes-empty');
+  await js(`window.__open = [...document.querySelectorAll('.tree-item')].find(b=>b.textContent.includes('Projects')); window.__open.click()`); await wait(200);
+  await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.includes('Atlas')&&!b.classList.contains('tree-folder')||b.textContent.startsWith('Atlas')).click()`); await wait(300);
+  await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.trim()==='Atlas launch plan')?.click()`); await wait(500); await shot('5-note');
+  await js(`document.getElementById('reader').scrollTop = 99999`); await shot('6-note-bottom');
+  await js(`[...document.querySelectorAll('#topnav button')][2].click()`); await wait(4500); await shot('7-map');
+  await js(`[...document.querySelectorAll('#topnav button')][3].click()`); await shot('8-history');
+  await js(`{const i=document.getElementById('search-input'); i.value='atlas'; i.dispatchEvent(new Event('input'))}`); await wait(400); await shot('9-search');
+  await js(`{const i=document.getElementById('search-input'); i.value=''; i.dispatchEvent(new Event('input')); document.querySelector('button[aria-label="Settings"]').click()}`); await wait(400); await shot('10-settings');
+  w.setMinimumSize(366, 72); w.setSize(366, 72); await shot('11-compact');
   fs.writeFileSync(path.join(out, 'errors.txt'), errors.join('\n') || 'none');
   app.quit();
 });
