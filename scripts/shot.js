@@ -90,7 +90,14 @@ app.whenReady().then(async () => {
   await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.startsWith('Atlas')).click()`); await wait(300);
   await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.trim()==='Atlas launch plan').click()`); await wait(500); await shot('5-note');
   await js(`[...document.querySelectorAll('.note-acts button')].find(b=>b.textContent.includes('Show on map')).click()`); await wait(1500); await shot('6-show-on-map');
-  await js(`document.querySelector('button[aria-label="Settings"]').click()`); await wait(400); await js(`document.getElementById('scroller').scrollTop = 99999`); await shot('10-settings');
+  await js(`document.querySelector('button[aria-label="Settings"]').click()`); await wait(400); await js(`document.getElementById('set-startup').scrollIntoView()`); await shot('10-settings');
+  // change a shortcut: click the "Settings" row, press Ctrl+Shift+P, then use it from the Chat page
+  await js(`document.querySelector('.key-btn[aria-label*="for Settings"]').click()`); await shot('10b-recording');
+  await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'P', code: 'KeyP', ctrlKey: true, shiftKey: true, bubbles: true }))`); await shot('10c-changed');
+  await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: '1', code: 'Digit1', ctrlKey: true, bubbles: true }))`); await wait(200);
+  errors.push('after Ctrl+1 view: ' + await js(`document.querySelector('.view.active').id`));
+  await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'P', code: 'KeyP', ctrlKey: true, shiftKey: true, bubbles: true }))`); await wait(200);
+  errors.push('after Ctrl+Shift+P view: ' + await js(`document.querySelector('.view.active').id`) + ' | tooltip: ' + await js(`document.querySelector('#topbar-tools button[aria-label="Settings"]').title`));
   await js(`[...document.querySelectorAll('#topnav button')][0].click()`);
   await js(`document.querySelector('#topbar-tools button[aria-label="Side chat"]').click()`);
   w.setMinimumSize(340, 420); w.setSize(400, 720); await wait(300); await shot('12-panel-chat');

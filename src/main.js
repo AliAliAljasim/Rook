@@ -9,8 +9,18 @@ const DEFAULTS = {
   vaultWin: 'C:\\Users\\alijas\\Documents\\Vault',
   claudePath: '/home/alijas/.local/bin/claude',
   readScope: 'machine', // 'machine' | 'vault'
-  name: 'Ali'
+  name: 'Ali',
+  launchAtLogin: true, // start with Windows, quietly in the tray
+  keys: {}             // the user's changed shortcuts, { action: 'Ctrl+N' }; defaults live in the renderer
 };
+const KEY_ACTIONS = ['newChat', 'mini', 'settings', 'chat', 'notes'];
+const cleanKeys = (k) => Object.fromEntries(Object.entries(k && typeof k === 'object' ? k : {})
+  .filter(([a, v]) => KEY_ACTIONS.includes(a) && typeof v === 'string' && /^((Ctrl|Alt|Shift)\+)*[^+\s]{1,12}$/.test(v)));
+// Windows starts Rook at sign-in with --hidden, which keeps the window in the tray until it is asked for.
+function applyLoginItem(cfg) {
+  if (!app.isPackaged) return; // never register the development build
+  try { app.setLoginItemSettings({ openAtLogin: !!cfg.launchAtLogin, args: ['--hidden'] }); } catch { /* best effort */ }
+}
 const userFile = (n) => path.join(app.getPath('userData'), n);
 const readJson = (f, fallback) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return fallback; } };
 
@@ -97,9 +107,9 @@ const createdByApp = new Set(); // rel paths of notes this app created (so Undo 
 
 // ---- window ------------------------------------------------------------------------
 let win, child, savedBounds = null, savedMax = false, miniMode = null;
-function createWindow() {
+function createWindow(show = true) {
   win = new BrowserWindow({
-    width: 980, height: 760, minWidth: 820, minHeight: 600, frame: false, title: 'Rook',
+    width: 980, height: 760, minWidth: 820, minHeight: 600, frame: false, title: 'Rook', show,
     backgroundColor: '#131211', icon: path.join(__dirname, '..', 'build', 'icon.ico'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
@@ -147,9 +157,12 @@ ipcMain.handle('config:set', (_, c) => {
     vaultWin: typeof c.vaultWin === 'string' && c.vaultWin.trim() ? c.vaultWin.trim() : cur.vaultWin,
     claudePath: typeof c.claudePath === 'string' && c.claudePath.trim() ? c.claudePath.trim() : cur.claudePath,
     readScope: c.readScope === 'vault' ? 'vault' : 'machine',
-    name: typeof c.name === 'string' && c.name.trim() ? c.name.trim().slice(0, 40) : cur.name
+    name: typeof c.name === 'string' && c.name.trim() ? c.name.trim().slice(0, 40) : cur.name,
+    launchAtLogin: typeof c.launchAtLogin === 'boolean' ? c.launchAtLogin : cur.launchAtLogin,
+    keys: cleanKeys(c.keys)
   };
   fs.writeFileSync(userFile('config.json'), JSON.stringify(next, null, 2));
+  applyLoginItem(next);
   walkCache.at = 0;
   return publicCfg();
 });
@@ -397,7 +410,8 @@ app.whenReady().then(() => {
   if (!primary) return;
   migrateOldData();
   createTray();
-  createWindow();
+  applyLoginItem(loadCfg());
+  createWindow(!(tray && process.argv.includes('--hidden')));
   setTimeout(checkUpdates, 8000);
   setInterval(checkUpdates, 4 * 3600e3);
 });

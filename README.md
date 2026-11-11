@@ -10,6 +10,10 @@ Writes are allowed only inside the vault; everything else is read-only.
 ## Background
 Closing the window keeps Rook running in the system tray, so a reply in progress carries on. Click the tray icon to reopen; right-click it to quit.
 Starting Rook again brings the running one forward.
+Rook also starts with Windows, hidden in the tray (Settings → Startup turns this off; only the installed app registers itself).
+
+## Shortcuts
+Settings → Keyboard shortcuts: click a shortcut and press the new keys (Ctrl or Alt with a key, or a function key). Changes are saved in config.json as `keys`.
 
 ## Updates
 Rook checks GitHub releases shortly after launch and every few hours. A newer version shows as an "Update available" button in the top bar:

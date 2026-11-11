@@ -539,8 +539,15 @@ async function paintSettings() {
   };
   paintScope();
   const card = (id, title, ...kids) => h('section', { cls: 'settings-card', id }, h('h2', { text: title }), ...kids);
-  const keys = [['New conversation', ['Ctrl', 'N']], ['Side chat or bar', ['Ctrl', 'M']], ['Settings', ['Ctrl', ',']], ['Chat · Notes', ['Ctrl', '1–2']], ['Send', ['Enter']], ['New line', ['Shift', 'Enter']], ['Stop a reply', ['Esc']]];
-  const secs = [['set-vault', 'Vault'], ['set-access', 'Access'], ['set-assistant', 'Assistant'], ['set-keys', 'Keyboard shortcuts'], ['set-about', 'About']];
+  const startHost = h('div');
+  const paintStart = () => startHost.replaceChildren(seg([['on', 'On'], ['off', 'Off']], S.cfg.launchAtLogin === false ? 'off' : 'on',
+    async (v) => { await save({ launchAtLogin: v === 'on' }); paintStart(); }, 'Open Rook when Windows starts'));
+  paintStart();
+  const keysHost = h('div');
+  const setKeys = async (keys, msg) => { await save({ keys }, msg || 'Shortcut changed.'); paintTools(); paintKeys(); };
+  const paintKeys = () => keysHost.replaceChildren(shortcutRows(setKeys));
+  paintKeys();
+  const secs = [['set-vault', 'Vault'], ['set-access', 'Access'], ['set-assistant', 'Assistant'], ['set-startup', 'Startup'], ['set-keys', 'Keyboard shortcuts'], ['set-about', 'About']];
   const nav = h('nav', { cls: 'settings-nav', 'aria-label': 'Settings categories' }, secs.map(([id, l], i) =>
     h('button', { type: 'button', cls: i ? '' : 'on', onClick: (e) => { nav.querySelectorAll('button').forEach((b) => b.classList.remove('on')); e.currentTarget.classList.add('on'); $(id).scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, l)));
   $('view-settings').replaceChildren(
@@ -558,7 +565,12 @@ async function paintSettings() {
         h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Claude CLI path, inside WSL' })), claude),
         h('p', { cls: 'sp-help', text: 'Rook runs Claude Code in WSL. Sign in once with “claude auth login” (or make login).' }),
         h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Your name' })), name)),
-      card('set-keys', 'Keyboard shortcuts', h('dl', { cls: 'keys' }, keys.map(([l, ks]) => h('div', null, h('dt', { text: l }), h('dd', null, ks.map((k) => h('kbd', { text: k }))))))),
+      card('set-startup', 'Startup',
+        h('div', { cls: 'sp-line' }, h('span', { text: 'Open Rook when Windows starts' }), startHost),
+        h('p', { cls: 'sp-help', text: 'It starts quietly in the tray by the clock; click its icon to open the window.' })),
+      card('set-keys', 'Keyboard shortcuts', keysHost,
+        h('div', { cls: 'sp-line' }, h('span', { cls: 'sp-help', text: 'Click a shortcut, then press the new keys. Esc cancels.' }),
+          pill('pill-ghost', 'Reset to defaults', () => setKeys({}, 'Shortcuts reset.')))),
       card('set-about', 'About', h('div', { cls: 'sp-line' }, h('span', { text: 'Rook' }), h('span', { cls: 'mono muted', text: S.version ? 'v' + S.version : '' })),
         h('div', { cls: 'sp-line', id: 'upd-slot' }),
         h('p', { cls: 'sp-help', text: 'Your notes stay in the vault on this computer. Saved chats and settings are kept locally in Rook’s app data.' })))));
@@ -672,21 +684,65 @@ async function loadNotes() {
   else if (S.view === 'notes') paintTree();
 }
 
+// ---------- keyboard shortcuts (changeable in Settings) ----------
+const SHORTCUTS = [
+  ['newChat', 'New conversation', 'Ctrl+N', () => newChat()],
+  ['mini', 'Side chat or bar', 'Ctrl+M', () => toggleMini()],
+  ['settings', 'Settings', 'Ctrl+,', () => go('settings')],
+  ['chat', 'Go to Chat', 'Ctrl+1', () => go('home')],
+  ['notes', 'Go to Notes', 'Ctrl+2', () => go('notes')]
+];
+const keyOf = (action) => (S.cfg?.keys || {})[action] || SHORTCUTS.find((x) => x[0] === action)[2];
+const keyHint = (action) => keyOf(action).split('+').join(' ');
+// The combination a key press stands for, e.g. "Ctrl+Shift+K"; null while only modifier keys are down.
+function comboOf(e) {
+  if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return null;
+  const key = /^Key[A-Z]$/.test(e.code) ? e.code.slice(3) : /^Digit\d$/.test(e.code) ? e.code.slice(5) : e.key.length === 1 ? e.key.toUpperCase() : e.key;
+  return [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', key].filter(Boolean).join('+');
+}
+let recording = null; // the shortcut being changed in Settings, if any
+function shortcutRows(onChange) {
+  const rows = SHORTCUTS.map(([action, label]) => {
+    const btn = h('button', { type: 'button', cls: 'key-btn', 'aria-label': `Change the shortcut for ${label}`, title: 'Click, then press the new keys' });
+    const show = () => { btn.classList.remove('rec'); btn.replaceChildren(...keyOf(action).split('+').map((k) => h('kbd', { text: k }))); };
+    btn.addEventListener('click', () => {
+      if (recording) recording.cancel();
+      btn.classList.add('rec'); btn.replaceChildren('Press keys…');
+      recording = { cancel: () => { recording = null; show(); }, take: (combo) => {
+        if (!/^(Ctrl|Alt)\+/.test(combo) && !/^(Shift\+)?F\d{1,2}$/.test(combo)) return toast('Use Ctrl or Alt with a key, or a function key.', { error: true });
+        const clash = SHORTCUTS.find(([a]) => a !== action && keyOf(a) === combo);
+        if (clash) return toast(`${combo.split('+').join(' ')} is already used by “${clash[1]}”.`, { error: true });
+        recording = null;
+        onChange({ ...(S.cfg.keys || {}), [action]: combo });
+      } };
+    });
+    btn.addEventListener('blur', () => { if (recording && btn.classList.contains('rec')) recording.cancel(); });
+    show();
+    return h('div', null, h('dt', { text: label }), h('dd', null, btn));
+  });
+  const fixed = [['Send', ['Enter']], ['New line', ['Shift', 'Enter']], ['Stop a reply', ['Esc']]].map(([l, ks]) =>
+    h('div', null, h('dt', { text: l }), h('dd', null, ks.map((k) => h('kbd', { text: k })))));
+  return h('dl', { cls: 'keys' }, rows, fixed);
+}
+
 // ---------- wiring ----------
+function paintTools() {
+  $('topbar-tools').replaceChildren(h('span', { id: 'upd-pill' }), tool('plus', 'New conversation', newChat, { title: `New conversation (${keyHint('newChat')})` }),
+    tool('chat', 'Side chat', () => setMini('panel'), { title: 'Side chat' }),
+    tool('compact', 'Quick-capture bar', () => setMini('bar'), { title: 'Quick-capture bar' }),
+    tool('settings', 'Settings', () => go('settings'), { title: `Settings (${keyHint('settings')})` }));
+  $('compact-expand').replaceChildren(tool('chat', 'Side chat', () => setMini('panel'), { title: 'Show the chat' }),
+    tool('expand', 'Return to window', () => setMini(false), { title: `Return to window (${keyHint('mini')})` }));
+  $('panel-tools').replaceChildren(tool('plus', 'New conversation', newChat, { title: `New conversation (${keyHint('newChat')})` }),
+    tool('compact', 'Quick-capture bar', () => setMini('bar'), { title: 'Shrink to a bar' }),
+    tool('expand', 'Return to window', () => setMini(false), { title: `Return to window (${keyHint('mini')})` }));
+  paintUpdate();
+}
 function wire() {
   $('brand-mark').append(mark());
   $('compact-mark').append(mark('compact-mark'));
   $('go-home').addEventListener('click', () => go('home'));
-  $('topbar-tools').append(h('span', { id: 'upd-pill' }), tool('plus', 'New conversation', newChat, { title: 'New conversation (Ctrl N)' }),
-    tool('chat', 'Side chat', () => setMini('panel'), { title: 'Side chat' }),
-    tool('compact', 'Quick-capture bar', () => setMini('bar'), { title: 'Quick-capture bar' }),
-    tool('settings', 'Settings', () => go('settings'), { title: 'Settings (Ctrl ,)' }));
-  $('compact-expand').append(tool('chat', 'Side chat', () => setMini('panel'), { title: 'Show the chat' }),
-    tool('expand', 'Return to window', () => setMini(false), { title: 'Return to window (Ctrl M)' }));
   $('panel-mark').append(mark());
-  $('panel-tools').append(tool('plus', 'New conversation', newChat, { title: 'New conversation (Ctrl N)' }),
-    tool('compact', 'Quick-capture bar', () => setMini('bar'), { title: 'Shrink to a bar' }),
-    tool('expand', 'Return to window', () => setMini(false), { title: 'Return to window (Ctrl M)' }));
   $('win-min').addEventListener('click', () => VA.win.minimize());
   $('win-max').addEventListener('click', () => VA.win.maximize());
   $('win-close').addEventListener('click', () => VA.win.close());
@@ -699,13 +755,18 @@ function wire() {
   ci.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); send(ci.value); } });
 
   document.addEventListener('keydown', (e) => {
-    const k = e.key.toLowerCase();
-    if (e.ctrlKey && k === 'n') { e.preventDefault(); newChat(); }
-    else if (e.ctrlKey && k === 'm') { e.preventDefault(); toggleMini(); }
-    else if (e.ctrlKey && k === ',') { e.preventDefault(); go('settings'); }
-    else if (e.ctrlKey && /^[1-2]$/.test(k)) { e.preventDefault(); go(NAV[Number(k) - 1][0]); }
+    if (recording) { // Settings is waiting for a new shortcut: this key press is the answer, not a command
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') return recording.cancel();
+      const combo = comboOf(e);
+      if (combo) recording.take(combo);
+      return;
+    }
+    const combo = comboOf(e);
+    const hit = combo && SHORTCUTS.find(([a]) => keyOf(a) === combo);
+    if (hit) { e.preventDefault(); hit[3](); }
     else if (e.key === 'Escape' && S.streaming) stop();
-  });
+  }, true);
 }
 
 (async function boot() {
@@ -714,8 +775,8 @@ function wire() {
   S.cfg = await VA.getConfig();
   S.version = await VA.version().catch(() => '');
   S.update = await VA.update.get().catch(() => S.update);
+  paintTools();
   VA.update.onStatus(onUpdate);
-  paintUpdate();
   S.chats = (await VA.loadChats()) || [];
   for (const c of S.chats) for (const m of c.msgs) if (m.role === 'bot' && !m.done) { m.done = true; m.stopped = true; }
   await loadNotes();
