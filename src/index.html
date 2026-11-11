@@ -8,16 +8,16 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<!-- STARTUP: the ring turns around the book until the vault is ready, then the screen swipes up (as in Groove). -->
+<!-- STARTUP: the book draws itself, its ribbon drops in and lines are written while the vault loads; then the screen turns like a page. -->
 <div class="splash" id="splash" aria-hidden="true">
   <div class="splash-mark">
-    <div class="splash-disc">
-      <svg viewBox="0 0 256 256"><defs><radialGradient id="splash-v" cx="40%" cy="28%" r="85%"><stop offset="0" stop-color="#2F2B27"/><stop offset="1" stop-color="#131211"/></radialGradient></defs><circle cx="128" cy="128" r="114" fill="url(#splash-v)" stroke="#2A2622" stroke-width="10"/><circle cx="128" cy="128" r="98" fill="none" stroke="#2A2622" stroke-width="2"/><circle cx="128" cy="128" r="84" fill="none" stroke="#2A2622" stroke-width="2"/></svg>
-      <svg class="splash-ring" viewBox="0 0 256 256"><circle cx="128" cy="128" r="114" fill="none" stroke="#E0A458" stroke-width="10" stroke-linecap="round" stroke-dasharray="250 466"/></svg>
-      <span class="splash-sheen"></span>
-      <svg class="splash-book" viewBox="0 0 32 32"><rect x="4.5" y="3" width="23" height="26" rx="2.5" fill="#1f1e1d" stroke="#e0a458" stroke-width="1.8"/><path d="M19.24 2.1h5.06v12.61l-2.53-2.3-2.53 2.3z" fill="#e0a458"/><path d="M9 20.6h8.97M9 24.4h5.52" stroke="#f8f7f5" stroke-width="1.9" stroke-linecap="round"/></svg>
-    </div>
-    <span class="splash-word">rook</span>
+    <svg class="splash-book" viewBox="0 0 32 32">
+      <rect class="sb-cover" x="4.5" y="3" width="23" height="26" rx="2.5" pathLength="100"/>
+      <path class="sb-ribbon" d="M19.24 2.1h5.06v12.61l-2.53-2.3-2.53 2.3z"/>
+      <path class="sb-line" d="M9 20.6h8.97" pathLength="100"/>
+      <path class="sb-line two" d="M9 24.4h5.52" pathLength="100"/>
+    </svg>
+    <span class="splash-word"><span>r</span><span>o</span><span>o</span><span>k</span></span>
   </div>
 </div>
 

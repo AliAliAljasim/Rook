@@ -651,11 +651,11 @@ function wire() {
   for (const c of S.chats) for (const m of c.msgs) if (m.role === 'bot' && !m.done) { m.done = true; m.stopped = true; }
   await loadNotes();
   paint();
-  // The splash stays long enough to read as an entrance, then swipes up.
+  // The splash stays long enough for the book to draw and one line to be written, then turns away like a page.
   setTimeout(() => {
     const sp = $('splash'); sp.classList.add('done');
-    setTimeout(() => sp.remove(), 900);
+    setTimeout(() => sp.remove(), 1000);
     focusAsk();
-  }, Math.max(0, 1300 - (Date.now() - started)));
+  }, Math.max(0, 1900 - (Date.now() - started)));
   setInterval(() => { if (!S.streaming) loadNotes(); }, 30000);
 })();

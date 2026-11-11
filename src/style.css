@@ -39,22 +39,36 @@ input, textarea { font: inherit; color: inherit; }
 
 @keyframes rook-spin { to { transform: rotate(360deg); } }
 
-/* ---------- STARTUP (same choreography as Groove: the mark turns, then the screen swipes up) ---------- */
-.splash { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: var(--bg); transition: transform .8s cubic-bezier(.76,0,.24,1); }
-.splash-mark { display: flex; flex-direction: column; align-items: center; gap: 22px; animation: splash-in .7s cubic-bezier(.2,.7,.2,1) both; }
-.splash-disc { position: relative; width: 132px; height: 132px; filter: drop-shadow(0 18px 30px rgba(0,0,0,.5)); }
-.splash-disc > svg:not(.splash-book) { display: block; width: 100%; height: 100%; }
-.splash-ring { position: absolute; inset: 0; animation: rook-spin 1.8s linear infinite; }
-.splash-sheen { position: absolute; inset: 8%; border-radius: 50%; pointer-events: none; animation: rook-spin 1.8s linear infinite;
-  background: conic-gradient(from 20deg, rgba(255,255,255,0) 0deg, rgba(255,255,255,.14) 28deg, rgba(255,255,255,0) 56deg, rgba(255,255,255,0) 180deg, rgba(255,255,255,.08) 208deg, rgba(255,255,255,0) 236deg);
-  -webkit-mask-image: radial-gradient(circle closest-side, transparent 52%, #000 53%); mask-image: radial-gradient(circle closest-side, transparent 52%, #000 53%); }
-.splash-book { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; transform: translate(-50%, -50%); }
-.splash-word { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; color: var(--fg); animation: splash-word .6s .25s cubic-bezier(.2,.7,.2,1) both; }
-@keyframes splash-in { from { opacity: 0; transform: scale(.82); } to { opacity: 1; transform: none; } }
-@keyframes splash-word { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-.splash.done { transform: translateY(-100%); }
-.splash.done .splash-mark { transform: translateY(-48px); opacity: 0; transition: transform .8s cubic-bezier(.76,0,.24,1), opacity .5s ease; }
+/* ---------- STARTUP (Rook's own: the book draws itself, the ribbon drops, lines write; then the screen turns like a page) ---------- */
+.splash { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: var(--bg);
+  transform-origin: left center; backface-visibility: hidden; transition: transform .95s cubic-bezier(.7,0,.25,1); }
+.splash::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .95s ease;
+  background: linear-gradient(90deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.25) 60%, rgba(0,0,0,.7) 100%); }
+.splash-mark { display: flex; flex-direction: column; align-items: center; gap: 26px; }
+.splash-book { width: 104px; height: 104px; overflow: visible; filter: drop-shadow(0 18px 30px rgba(0,0,0,.5)); }
+.sb-cover { fill: #1f1e1d; fill-opacity: 0; stroke: #e0a458; stroke-width: 1.8; stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 100;
+  animation: sb-draw .9s cubic-bezier(.6,0,.2,1) .1s forwards, sb-fill .5s ease .8s forwards; }
+.sb-ribbon { fill: #e0a458; transform-box: fill-box; transform-origin: top center; transform: scaleY(0); animation: sb-drop .55s cubic-bezier(.3,1.5,.5,1) .75s forwards; }
+.sb-line { fill: none; stroke: #f8f7f5; stroke-width: 1.9; stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 100; animation: sb-write 2.1s cubic-bezier(.5,0,.3,1) 1.15s infinite; }
+.sb-line.two { animation-name: sb-write-two; }
+@keyframes sb-draw { to { stroke-dashoffset: 0; } }
+@keyframes sb-fill { to { fill-opacity: 1; } }
+@keyframes sb-drop { to { transform: scaleY(1); } }
+/* The two lines are written one after the other, rest, fade, and are written again while the vault loads. */
+@keyframes sb-write { 0% { stroke-dashoffset: 100; opacity: 1; } 30%, 82% { stroke-dashoffset: 0; opacity: 1; } 94%, 100% { stroke-dashoffset: 0; opacity: 0; } }
+@keyframes sb-write-two { 0%, 26% { stroke-dashoffset: 100; opacity: 1; } 52%, 82% { stroke-dashoffset: 0; opacity: 1; } 94%, 100% { stroke-dashoffset: 0; opacity: 0; } }
+.splash-word { display: flex; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; color: var(--fg); }
+.splash-word span { opacity: 0; transform: translateY(10px); animation: sb-letter .5s cubic-bezier(.2,.7,.2,1) forwards; }
+.splash-word span:nth-child(1) { animation-delay: .55s; } .splash-word span:nth-child(2) { animation-delay: .63s; }
+.splash-word span:nth-child(3) { animation-delay: .71s; } .splash-word span:nth-child(4) { animation-delay: .79s; }
+@keyframes sb-letter { to { opacity: 1; transform: none; } }
+.splash.done { transform: perspective(1800px) rotateY(-102deg); }
+.splash.done::after { opacity: 1; }
 @media (max-height: 200px) { .splash { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .sb-cover { stroke-dashoffset: 0; fill-opacity: 1; } .sb-ribbon { transform: none; } .sb-line { stroke-dashoffset: 0; animation: none; }
+  .splash-word span { opacity: 1; transform: none; } .splash.done { transform: none; opacity: 0; }
+}
 
 /* ---------- shell ---------- */
 .app { position: relative; height: 100vh; background: var(--bg); color: var(--fg); display: flex; flex-direction: column; overflow: hidden; }

@@ -78,8 +78,10 @@ app.whenReady().then(async () => {
   await w.loadFile(path.join(__dirname, '../src/index.html'));
   const shot = async (n) => { await wait(500); fs.writeFileSync(path.join(out, n + '.png'), (await w.webContents.capturePage()).toPNG()); };
   const js = (c) => w.webContents.executeJavaScript(c).catch((e) => { errors.push('js: ' + e.message); });
-  await wait(450); await shot('0-splash');
-  await wait(1900); await shot('1-home');
+  await wait(100); await shot('0a-splash');
+  await wait(450); await shot('0b-splash');
+  await wait(100); await shot('0c-splash-turn');
+  await wait(1500); await shot('1-home');
   await js(`[...document.querySelectorAll('#view-home .row')].find(b=>b.textContent.includes('Atlas: what')).click()`); await wait(300);
   await js(`document.getElementById('scroller').scrollTop = 0`); await shot('2-chat');
   await js(`document.getElementById('scroller').scrollTop = 99999`); await shot('3-chat-bottom');
