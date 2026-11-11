@@ -71,10 +71,11 @@ for (const [c, f] of Object.entries({ 'config:get': () => cfg, 'config:set': (_,
   'vault:search': (_, q) => all.filter((n) => n.file.toLowerCase().includes(String(q).toLowerCase())).slice(0, 6).concat([{ ...all[3], snippet: 'Printer quote — waiting on a revised figure for ' + q }]),
   'attach:save': (_, { name }) => 'Attachments/' + name, 'schedule:runWeekly': () => ({ ok: true }),
   'change:get': () => ({ hasBackup: true, before: '# Atlas launch plan\n\nThe plan for shipping Atlas.\n\n## Still open\n\n- Printer quote\n- Cover typeface licence\n- Launch date\n\n## Notes\n\nNothing yet.\n', now: '# Atlas launch plan\n\nThe plan for shipping Atlas.\n\n## Still open\n\n- Printer quote, revised figure due Friday\n- Cover typeface licence\n- Launch date\n- Confirm proof dates with Sam\n\n## Notes\n\nNothing yet.\n' }),
-  'change:revert': () => true }))
+  'change:revert': () => true, 'attach:discard': () => true,
+  'voice:status': () => ({ installed: false, installing: false, percent: 0, sizeMb: 157 }), 'voice:install': () => ({ ok: true }), 'voice:remove': () => true, 'voice:transcribe': () => 'hello from the microphone' }))
   ipcMain.handle(c, f);
 ipcMain.on('config:initial', (e) => { e.returnValue = { theme: THEME, textSize: 'regular' }; });
-['voice:start', 'chat:send', 'chat:cancel', 'clipboard:write', 'update:check', 'update:download', 'update:install', 'win:mini', 'win:minimize', 'win:maximize', 'win:close'].forEach((c) => ipcMain.on(c, () => {}));
+['voice:start', 'attach:sent', 'chat:send', 'chat:cancel', 'clipboard:write', 'update:check', 'update:download', 'update:install', 'win:mini', 'win:minimize', 'win:maximize', 'win:close'].forEach((c) => ipcMain.on(c, () => {}));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
@@ -122,6 +123,12 @@ app.whenReady().then(async () => {
   await js(`addFiles([new File(['x'], 'quote.pdf', { type: 'application/pdf' }), new File(['y'], 'image.png', { type: 'image/png' })])`); await wait(400); await snap('3h-attach');
   await check('attachments', `ATTACH.map(a=>a.name.replace(/\\d/g,'#'))`);
   await js(`ATTACH.length = 0; paintAsk()`);
+  // voice: not installed, so pressing the microphone offers the download
+  await js(`document.querySelector('#mic-slot .tool-btn').dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 1, bubbles: true }))`); await wait(300); await snap('3i-voice-setup');
+  await check('voice setup shown', `popKind + ' | ' + [...document.querySelectorAll('#ask-pop button')].map(b=>b.textContent||b.getAttribute('aria-label')).join(', ')`);
+  await key({ key: 'Escape' });
+  // the sound pipeline: one second of audio in, a 16 kHz mono 16-bit WAV out (44-byte header + 32000 bytes)
+  await check('recording converts to WAV of length', `toWav(new Blob([wavFrom(new Float32Array(16000).map((_, i) => Math.sin(i / 8) * 0.3))], { type: 'audio/wav' })).then((w) => [w.length, String.fromCharCode(...w.slice(0, 4))])`);
   // notes
   await js(`[...document.querySelectorAll('#topnav button')][1].click()`); await wait(4500); await snap('4-notes-map');
   await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.includes('Projects')).click()`); await wait(200);
@@ -130,7 +137,7 @@ app.whenReady().then(async () => {
   // settings
   await js(`document.querySelector('button[aria-label="Settings"]').click()`); await wait(400);
   await js(`document.getElementById('set-projects').scrollIntoView()`); await snap('10a-settings-projects');
-  await js(`document.getElementById('set-look').scrollIntoView()`); await snap('10b-settings-look');
+  await js(`document.getElementById('set-voice').scrollIntoView()`); await snap('10b-settings-look');
   await js(`document.getElementById('set-keys').scrollIntoView()`); await snap('10c-settings-keys');
   // schedule: turn Friday on for daily notes; change a shortcut and use it
   await js(`[...document.querySelectorAll('.day-picks button')].find(b=>b.textContent==='Fri').click()`); await wait(200);

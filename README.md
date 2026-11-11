@@ -9,8 +9,8 @@ Writes are allowed only inside the vault; everything else is read-only.
 - **Answer buttons**: when Rook asks you to choose (for example where to save a summary), the options appear as buttons. It ends such a reply with a `<choices>` block, which the app turns into buttons.
 - **Changes and undo**: each edited note's chip has a Changes button showing a before/after diff, with "Put it back as it was". A copy of the note is kept before every edit (userData/backups, 30 days); a note Rook created is moved to the Recycle Bin instead.
 - **Search**: Ctrl K opens a palette over note names, note text and saved chats.
-- **Attachments**: drop, paste or pick files and screenshots; they are filed in the vault's attachment folder and Rook is told where they are.
-- **Dictation**: the microphone button (Alt V) opens Windows voice typing on the ask box. Rook has no speech engine of its own.
+- **Attachments**: drop, paste or pick files and screenshots; they are filed in the vault's attachment folder and Rook is told where they are. Removing one before sending moves its vault copy to the Recycle Bin.
+- **Voice, hold to talk**: hold the microphone button (or Alt V), speak, let go; the words are typed into the ask box. Speech is transcribed on this PC by whisper.cpp (`src/voice.js`), which is downloaded once on request (about 157 MB: the engine from the whisper.cpp GitHub releases, the English "base" model from Hugging Face, each checked against a pinned SHA-256). Until then the button offers Windows voice typing.
 - **/agent**: type `/agent` in the ask box for a popup with the model and an effort slider (passed to the CLI as `--model` / `--effort`).
 - **Projects**: Settings → Projects names folders (WSL or Windows paths) so Rook goes straight to them.
 - **Scheduled notes**: Settings → Scheduled notes. Daily notes on the weekdays you pick; a weekly review written by the agent on a chosen day and hour (`src/schedule.js`). Both need Rook running, which the tray takes care of.

@@ -5,6 +5,7 @@ const path = require('path');
 const { buildPolicy, SYSTEM_PROMPT } = require('./policy');
 const { resolveInside } = require('./guard');
 const schedule = require('./schedule');
+const voiceEngine = require('./voice');
 
 const DEFAULTS = {
   vaultWin: 'C:\\Users\\alijas\\Documents\\Vault',
@@ -364,10 +365,31 @@ ipcMain.handle('attach:save', (_, { name, bytes }) => {
   const abs = resolveInside(cfg.vaultWin, rel); // guard: refuses anything outside the vault
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, buf, { flag: 'wx' });
+  attachedNow.add(rel);
   return rel;
 });
+// Taking an attachment off a message before sending it: the copy Rook just filed goes to the Recycle Bin.
+// Only files saved by attach:save in this session qualify, so nothing else in the vault can be removed this way.
+const attachedNow = new Set();
+ipcMain.handle('attach:discard', async (_, rel) => {
+  if (!attachedNow.has(rel)) return false;
+  attachedNow.delete(rel);
+  try { await shell.trashItem(resolveInside(loadCfg().vaultWin, rel)); return true; } catch { return false; }
+});
+ipcMain.on('attach:sent', (_, rels) => { for (const r of Array.isArray(rels) ? rels : []) attachedNow.delete(r); });
 
-// Voice: Rook has no speech engine of its own, so it opens Windows voice typing (Win+H) on the ask box.
+// Voice, hold to talk: recorded in the window, transcribed on this PC by whisper.cpp (src/voice.js).
+let voice = null;
+const getVoice = () => voice || (voice = voiceEngine.create(userFile('voice')));
+const voiceProgress = (st) => { if (win && !win.isDestroyed()) win.webContents.send('voice:progress', st); };
+ipcMain.handle('voice:status', () => getVoice().status());
+ipcMain.handle('voice:install', async () => {
+  try { await getVoice().install(voiceProgress); return { ok: true }; }
+  catch (e) { return { ok: false, error: String(e && e.message || e).slice(0, 200) }; }
+});
+ipcMain.handle('voice:remove', () => getVoice().remove());
+ipcMain.handle('voice:transcribe', (_, wav) => getVoice().transcribe(wav));
+// The fallback when the engine is not installed: Windows voice typing (Win+H) on the ask box.
 ipcMain.on('voice:start', () => {
   const ps = '$k=Add-Type -PassThru -Name K -Namespace RookKeys -MemberDefinition \'[DllImport("user32.dll")] public static extern void keybd_event(byte v, byte s, uint f, System.UIntPtr e);\';'
     + '$z=[System.UIntPtr]::Zero;$k::keybd_event(0x5B,0,0,$z);$k::keybd_event(0x48,0,0,$z);$k::keybd_event(0x48,0,2,$z);$k::keybd_event(0x5B,0,2,$z)';

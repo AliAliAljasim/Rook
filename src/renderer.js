@@ -615,6 +615,20 @@ async function paintSettings() {
   };
   paintSched();
 
+  // Voice
+  const voiceHost = h('div', { cls: 'sp-stack' });
+  const paintVoice = async () => {
+    VOICE.status = await VA.voice.status().catch(() => VOICE.status);
+    const st = VOICE.status;
+    voiceHost.replaceChildren(
+      h('div', { cls: 'sp-line' }, h('span', { id: 'voice-line', text: st.installing ? `Downloading… ${st.percent}%` : st.installed ? 'Hold to talk is installed.' : 'Hold to talk is not installed.' }),
+        st.installing ? null : st.installed
+          ? pill('pill-ghost', 'Remove', async () => { await VA.voice.remove(); paintVoice(); paintMic(); toast('Voice removed.'); })
+          : pill('pill-ghost', `Download (about ${st.sizeMb} MB)`, async () => { VOICE.status = { ...st, installing: true, percent: 0 }; paintVoice(); const r = await VA.voice.install(); if (!r.ok) toast(`Voice could not be set up: ${r.error}`, { error: true }); await paintVoice(); paintMic(); })),
+      h('p', { cls: 'sp-help', text: `Hold the microphone button in the ask box, or hold ${keyHint('voice')}, and speak; let go and the words are typed for you. Speech is turned into text on this PC (English) and is never sent anywhere. Without it, the microphone button offers Windows voice typing instead.` }));
+  };
+  paintVoice();
+
   const keysHost = h('div');
   const setKeys = async (keys, msg) => {
     await save({ keys }, msg || 'Shortcut changed.'); paintTools(); paintKeys();
@@ -623,7 +637,7 @@ async function paintSettings() {
   };
   const paintKeys = () => keysHost.replaceChildren(shortcutRows(setKeys));
   paintKeys();
-  const secs = [['set-vault', 'Vault'], ['set-access', 'Access'], ['set-assistant', 'Assistant'], ['set-projects', 'Projects'], ['set-schedule', 'Scheduled notes'], ['set-look', 'Appearance'], ['set-startup', 'Startup'], ['set-keys', 'Keyboard shortcuts'], ['set-about', 'About']];
+  const secs = [['set-vault', 'Vault'], ['set-access', 'Access'], ['set-assistant', 'Assistant'], ['set-projects', 'Projects'], ['set-schedule', 'Scheduled notes'], ['set-voice', 'Voice'], ['set-look', 'Appearance'], ['set-startup', 'Startup'], ['set-keys', 'Keyboard shortcuts'], ['set-about', 'About']];
   const nav = h('nav', { cls: 'settings-nav', 'aria-label': 'Settings categories' }, secs.map(([id, l], i) =>
     h('button', { type: 'button', cls: i ? '' : 'on', onClick: (e) => { nav.querySelectorAll('button').forEach((b) => b.classList.remove('on')); e.currentTarget.classList.add('on'); $(id).scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, l)));
   $('view-settings').replaceChildren(
@@ -643,6 +657,7 @@ async function paintSettings() {
         h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Your name' })), name)),
       card('set-projects', 'Projects', projHost),
       card('set-schedule', 'Scheduled notes', schedHost),
+      card('set-voice', 'Voice', voiceHost),
       card('set-look', 'Appearance', lookHost),
       card('set-startup', 'Startup',
         h('div', { cls: 'sp-line' }, h('span', { text: 'Open Rook when Windows starts' }), startHost),
@@ -774,11 +789,13 @@ const SHORTCUTS = [
   ['chat', 'Go to Chat', 'Ctrl+1', () => go('home')],
   ['notes', 'Go to Notes', 'Ctrl+2', () => go('notes')],
   ['search', 'Search notes and chats', 'Ctrl+K', () => openPalette()],
-  ['voice', 'Dictate with Windows voice typing', 'Alt+V', () => dictate()],
+  ['voice', 'Hold to talk', 'Alt+V', () => voiceHoldKey()],
   ['summon', 'Show or hide Rook, from any app', 'Ctrl+Alt+Space', () => {}], // these two are registered system-wide by the main process
   ['capture', 'Send highlighted text to today’s note, from any app', 'Ctrl+Alt+C', () => {}]
 ];
-function dictate() { if (S.mini === 'bar') $('compact-input').focus(); else $('ask').focus(); VA.voice(); }
+// Holding the voice shortcut records until its last key is let go.
+let voiceKeyDown = false;
+function voiceHoldKey() { if (voiceKeyDown) return; voiceKeyDown = true; voiceStart(); }
 const keyOf = (action) => (S.cfg?.keys || {})[action] || SHORTCUTS.find((x) => x[0] === action)[2];
 const keyHint = (action) => keyOf(action).split('+').join(' ');
 // The combination a key press stands for, e.g. "Ctrl+Shift+K"; null while only modifier keys are down.
@@ -833,13 +850,20 @@ function wire() {
   $('go-home').addEventListener('click', () => go('home'));
   $('panel-mark').append(mark());
   $('attach-slot').append(tool('clip', 'Attach files', () => $('file-pick').click(), { title: 'Attach files or screenshots (or drop or paste them here)' }));
-  $('mic-slot').append(tool('mic', 'Dictate', dictate, { title: 'Dictate with Windows voice typing' }));
+  const mic = tool('mic', 'Hold to talk', () => {}, { title: 'Hold to talk' });
+  mic.addEventListener('pointerdown', (e) => { if (e.button === 0) { mic.setPointerCapture(e.pointerId); voiceStart(); } });
+  for (const ev of ['pointerup', 'pointercancel']) mic.addEventListener(ev, () => voiceStop());
+  mic.addEventListener('keydown', (e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) voiceStart(); });
+  mic.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') voiceStop(); });
+  $('mic-slot').append(mic);
+  document.addEventListener('keyup', () => { if (voiceKeyDown) { voiceKeyDown = false; voiceStop(); } }, true);
+  window.addEventListener('blur', () => { if (voiceKeyDown) { voiceKeyDown = false; voiceStop(); } });
   $('file-pick').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
   // Files dropped anywhere on the window, or pasted into the ask box, become attachments.
   document.addEventListener('dragover', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
   document.addEventListener('drop', (e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); addFiles(e.dataTransfer.files); } });
   $('ask').addEventListener('paste', (e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } });
-  document.addEventListener('mousedown', (e) => { if (popKind && !e.target.closest('#ask-pop, .hint-btn, #ask')) closePop(); });
+  document.addEventListener('mousedown', (e) => { if (popKind && !e.target.closest('#ask-pop, .hint-btn, #ask, #mic-slot')) closePop(); });
   $('win-min').addEventListener('click', () => VA.win.minimize());
   $('win-max').addEventListener('click', () => VA.win.maximize());
   $('win-close').addEventListener('click', () => VA.win.close());
@@ -862,7 +886,7 @@ function wire() {
     if (overlayKey(e)) { e.preventDefault(); e.stopPropagation(); return; }
     const combo = comboOf(e);
     const hit = combo && SHORTCUTS.find(([a]) => keyOf(a) === combo);
-    if (hit) { e.preventDefault(); hit[3](); }
+    if (hit) { e.preventDefault(); if (!e.repeat || hit[0] !== 'voice') hit[3](); }
     else if (e.key === 'Escape' && S.streaming) stop();
   }, true);
 }
@@ -878,6 +902,9 @@ function wire() {
   paintTools();
   VA.update.onStatus(onUpdate);
   VA.onSummon(() => setTimeout(focusAsk, 60));
+  VA.voice.onProgress(onVoiceProgress);
+  VOICE.status = await VA.voice.status().catch(() => VOICE.status);
+  paintMic();
   VA.onSchedule((ev) => { toast(`${ev.title}${ev.body ? ': ' + ev.body : ''}`); loadNotes(); });
   S.chats = (await VA.loadChats()) || [];
   for (const c of S.chats) for (const m of c.msgs) if (m.role === 'bot' && !m.done) { m.done = true; m.stopped = true; }

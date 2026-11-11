@@ -499,6 +499,15 @@ body[data-mini="panel"] .ask-hint { padding: 0 12px 8px; font-size: 11px; }
 .ask-files .ask-ctx { margin-top: 4px; }
 .ask-line .tool-btn { width: 34px; height: 34px; }
 #attach-slot { margin-left: -10px; }
+#mic-slot .tool-btn { touch-action: none; }
+#mic-slot .tool-btn.rec { background: var(--accent); color: var(--on-accent); animation: mic-pulse 1.2s ease-in-out infinite; }
+#mic-slot .tool-btn.busy { color: var(--accent); animation: mic-pulse 1.2s ease-in-out infinite; }
+@keyframes mic-pulse { 50% { box-shadow: 0 0 0 6px rgba(var(--accent-rgb),.22); } }
+.pop-text { margin: 0; padding: 0 6px; font-size: 13px; line-height: 1.5; color: var(--fg); }
+.pop-acts { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding: 0 2px 2px; }
+.pop-acts .pill { height: 34px; padding: 0 16px; border-radius: 17px; font-size: 13px; }
+.pop-bar { height: 4px; margin: 0 6px 6px; border-radius: 2px; background: var(--b1); overflow: hidden; }
+.pop-bar span { display: block; height: 100%; background: var(--accent); transition: width .2s; }
 .hint-btn { color: var(--muted); text-decoration: underline; text-decoration-color: var(--b4); text-underline-offset: 3px; font-size: inherit; }
 .hint-btn:hover { color: var(--fg-2); }
 .ask-pop-anchor { position: relative; max-width: 840px; margin: 0 auto; }

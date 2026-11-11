@@ -214,9 +214,103 @@ async function addFiles(fileList) {
 }
 function attachNodes() {
   return ATTACH.map((a, i) => h('span', { cls: 'ask-ctx', title: a.rel }, icon(/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a.name) ? 'image' : 'file', 'sm'), h('span', { text: a.name }),
-    h('button', { type: 'button', 'aria-label': `Remove ${a.name}`, title: 'Remove (the file stays in the vault)', onClick: () => { ATTACH.splice(i, 1); paintAsk(); } }, icon('x', 'sm'))));
+    h('button', { type: 'button', 'aria-label': `Remove ${a.name}`, title: 'Remove (its copy in the vault goes to the Recycle Bin)', onClick: () => { ATTACH.splice(i, 1); VA.attachDiscard(a.rel); paintAsk(); } }, icon('x', 'sm'))));
 }
-function takeAttachments() { return ATTACH.splice(0, ATTACH.length); }
+// Once a message is sent its attachments are part of the conversation and are kept.
+function takeAttachments() { const out = ATTACH.splice(0, ATTACH.length); if (out.length) VA.attachSent(out.map((a) => a.rel)); return out; }
+
+// ---------- voice: hold to talk ----------
+// Hold the microphone button (or the voice shortcut), speak, let go: the words are typed into the ask box.
+// Sound is recorded here, converted to the 16 kHz mono WAV the engine wants, and transcribed on this PC.
+const VOICE = { state: 'idle', rec: null, stream: null, chunks: [], startedAt: 0, status: { installed: false, installing: false, percent: 0, sizeMb: 157 } };
+const voiceTarget = () => (S.mini === 'bar' ? $('compact-input') : $('ask'));
+function paintMic() {
+  const b = document.querySelector('#mic-slot .tool-btn');
+  if (!b) return;
+  b.classList.toggle('rec', VOICE.state === 'rec');
+  b.classList.toggle('busy', VOICE.state === 'busy');
+  b.title = VOICE.state === 'rec' ? 'Listening… let go to finish' : VOICE.state === 'busy' ? 'Turning speech into text…' : VOICE.status.installed ? `Hold to talk (or hold ${keyHint('voice')})` : 'Voice: set up hold to talk';
+  if (S.mini === 'bar' && VOICE.state !== 'idle') $('compact-status').textContent = VOICE.state === 'rec' ? 'Listening' : 'Transcribing';
+}
+function wavFrom(samples) { // Float32 mono at 16 kHz -> 16-bit PCM WAV
+  const buf = new ArrayBuffer(44 + samples.length * 2), v = new DataView(buf);
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 16000, true); v.setUint32(28, 32000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) { const x = Math.max(-1, Math.min(1, samples[i])); v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
+  return new Uint8Array(buf);
+}
+async function toWav(blob) {
+  const ctx = new AudioContext();
+  try {
+    const audio = await ctx.decodeAudioData(await blob.arrayBuffer());
+    const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(audio.duration * 16000)), 16000);
+    const src = off.createBufferSource(); src.buffer = audio; src.connect(off.destination); src.start();
+    return wavFrom((await off.startRendering()).getChannelData(0));
+  } finally { ctx.close(); }
+}
+async function voiceStart() {
+  if (VOICE.state !== 'idle') return;
+  if (!VOICE.status.installed) return openVoiceSetup();
+  VOICE.state = 'rec'; VOICE.startedAt = Date.now(); VOICE.chunks = []; paintMic();
+  try {
+    VOICE.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+    if (VOICE.state !== 'rec') { VOICE.stream.getTracks().forEach((t) => t.stop()); VOICE.stream = null; return; } // let go before the microphone opened
+    VOICE.rec = new MediaRecorder(VOICE.stream);
+    VOICE.rec.ondataavailable = (e) => { if (e.data.size) VOICE.chunks.push(e.data); };
+    VOICE.rec.onstop = voiceFinish;
+    VOICE.rec.start();
+  } catch {
+    VOICE.state = 'idle'; paintMic();
+    toast('Rook could not use the microphone. Check Windows Settings › Privacy › Microphone.', { error: true });
+  }
+}
+function voiceStop() {
+  if (VOICE.state !== 'rec') return;
+  if (VOICE.rec && VOICE.rec.state === 'recording') VOICE.rec.stop(); // voiceFinish runs when the last sound has been handed over
+  else { VOICE.state = 'idle'; paintMic(); }
+}
+async function voiceFinish() {
+  const held = Date.now() - VOICE.startedAt, type = VOICE.rec.mimeType;
+  VOICE.stream.getTracks().forEach((t) => t.stop()); VOICE.stream = null; VOICE.rec = null;
+  if (held < 350) { VOICE.state = 'idle'; paintMic(); return toast('Hold the button while you speak, then let go.'); }
+  VOICE.state = 'busy'; paintMic();
+  try {
+    const text = await VA.voice.transcribe(await toWav(new Blob(VOICE.chunks, { type })));
+    if (!text) toast('Nothing was heard.');
+    else {
+      const el = voiceTarget(), at = el.selectionStart ?? el.value.length, before = el.value.slice(0, at), after = el.value.slice(el.selectionEnd ?? at);
+      el.value = before + (before && !/\s$/.test(before) ? ' ' : '') + text + (after && !/^\s/.test(after) ? ' ' : '') + after;
+      el.dispatchEvent(new Event('input'));
+      el.focus();
+    }
+  } catch { toast('That recording could not be turned into text.', { error: true }); }
+  VOICE.state = 'idle'; paintMic(); paintAsk();
+}
+// First use: offer the one-time download, with Windows voice typing as the other way.
+function openVoiceSetup() {
+  if (S.mini === 'bar') setMini('panel');
+  const st = VOICE.status;
+  const install = async () => {
+    VOICE.status = { ...st, installing: true, percent: 0 }; openVoiceSetup();
+    const r = await VA.voice.install();
+    VOICE.status = await VA.voice.status();
+    if (r.ok) { closePop(); paintMic(); toast('Voice is ready. Hold the microphone button and speak.'); }
+    else { toast(`Voice could not be set up: ${r.error}`, { error: true }); if (popKind === 'voice') openVoiceSetup(); }
+    if (S.view === 'settings') paintSettings();
+  };
+  showPop('voice',
+    h('div', { cls: 'pop-head' }, h('span', { cls: 'eyebrow', text: 'Voice' }), tool('x', 'Close', () => { closePop(); focusAsk(); })),
+    h('p', { cls: 'pop-text', text: st.installing ? `Downloading… ${st.percent}%` : `Hold to talk turns speech into text on this PC; nothing is sent anywhere. It needs a one-time download of about ${st.sizeMb} MB.` }),
+    st.installing ? h('div', { cls: 'pop-bar' }, h('span', { style: `width:${st.percent}%` }))
+      : h('div', { cls: 'pop-acts' }, pill('pill-ghost', 'Use Windows voice typing', () => { closePop(); voiceTarget().focus(); VA.voice.windows(); }), pill('pill pill-accent', 'Download', install)));
+}
+function onVoiceProgress(st) {
+  VOICE.status = st;
+  if (popKind === 'voice' && st.installing) openVoiceSetup();
+  const line = $('voice-line'); if (line && st.installing) line.textContent = `Downloading… ${st.percent}%`;
+}
 
 // ---------- theme and text size ----------
 function applyTheme() {
