@@ -121,9 +121,29 @@ function describeTool(name, input = {}) {
     case 'Glob': return { verb: 'Listed', rest: ' ' + (input.pattern || ''), lines: [{ a: input.path ? displayPath(input.path) : 'vault', b: '' }] };
     case 'Edit': case 'MultiEdit': return { verb: 'Edited', rest: ' ' + displayPath(fp || ''), lines: [{ a: displayPath(fp || ''), b: '' }] };
     case 'Write': return { verb: 'Wrote', rest: ' ' + displayPath(fp || ''), lines: [{ a: displayPath(fp || ''), b: '' }] };
-    case 'Bash': return { verb: 'Ran', rest: ' ' + String(input.command || '').slice(0, 80), lines: [] };
+    case 'Bash': return { verb: 'Ran', rest: ' ' + String(input.description || input.command || '').slice(0, 80), lines: input.command ? [{ a: String(input.command), b: '' }] : [] };
+    case 'Skill': return { verb: 'Used skill', rest: ' ' + (input.skill || ''), lines: [] };
+    case 'Task': case 'Agent': return { verb: 'Delegated', rest: ' ' + (input.description || ''), lines: [] };
     default: return { verb: name, rest: '', lines: [] };
   }
+}
+const WRITE_TOOLS = new Set(['Edit', 'MultiEdit', 'Write']);
+// What a run of tool calls is doing right now, and what it did once finished.
+function toolActivity(b) {
+  if (b.name === 'Bash') return 'Running a command';
+  if (b.name === 'Read') return 'Reading' + b.rest;
+  if (b.name === 'Grep' || b.name === 'Glob') return 'Searching';
+  if (WRITE_TOOLS.has(b.name)) return 'Writing' + b.rest;
+  if (b.name === 'Skill') return 'Running skill' + b.rest;
+  return 'Working';
+}
+function toolSummary(tools) {
+  const n = { cmd: 0, read: 0, search: 0, write: 0, skill: 0, other: 0 };
+  for (const b of tools) n[b.name === 'Bash' ? 'cmd' : b.name === 'Read' ? 'read' : b.name === 'Grep' || b.name === 'Glob' ? 'search' : WRITE_TOOLS.has(b.name) ? 'write' : b.name === 'Skill' ? 'skill' : 'other']++;
+  const pl = (k, one, many) => (n[k] ? `${n[k]} ${n[k] === 1 ? one : many}` : null);
+  const parts = [pl('cmd', 'command', 'commands'), pl('search', 'search', 'searches'), pl('read', 'file read', 'files read'),
+    pl('write', 'edit', 'edits'), pl('skill', 'skill', 'skills'), pl('other', 'other step', 'other steps')].filter(Boolean);
+  return parts.join(', ');
 }
 const countLines = (s) => (s ? String(s).split('\n').length : 0);
 function chipFor(t) {
@@ -160,7 +180,8 @@ function onEvent(ev) {
         if (/permission|haven't been granted|not allowed|denied|was blocked/i.test(out)) {
           const p = t.input?.file_path || t.input?.path || '';
           t.err = 'Blocked by read-only rules';
-          bot.blocks.push({ t: 'blocked', path: p ? (p.startsWith('/') ? wslToWin(p) : p) : '' });
+          // The "write to vault instead" card is only for refused changes, not refused searches or commands.
+          if (WRITE_TOOLS.has(t.name)) bot.blocks.push({ t: 'blocked', path: p ? (p.startsWith('/') ? wslToWin(p) : p) : '' });
         } else t.err = out.slice(0, 200);
       } else {
         t.status = 'done';
@@ -272,15 +293,31 @@ function toolEl(b) {
   d.append(h('div', { cls: 'tool-body' }, rows.map((l) => h('div', null, h('span', { text: l.a }), h('span', { text: l.b })))));
   return d;
 }
+// A run of consecutive tool calls collapses into one line: live activity while running, a tally when done.
+function toolGroupEl(tools) {
+  const cur = tools.find((b) => b.status === 'running');
+  const failed = tools.filter((b) => b.status === 'failed').length;
+  const first = tools[0];
+  const d = h('details', { cls: 'tool tool-group' + (cur ? ' running' : '') });
+  if (first.groupOpen) d.open = true;
+  d.addEventListener('toggle', () => { first.groupOpen = d.open; });
+  d.append(h('summary', null, cur ? h('span', { cls: 'spinner', 'aria-hidden': 'true' }) : icon('check', 'sm'),
+    h('span', { cls: 'tool-label' }, cur ? h('b', { text: toolActivity(cur) + '…' }) : toolSummary(tools)),
+    h('span', { cls: 'tool-status', text: cur ? (tools.length > 1 ? `Step ${tools.length}` : '') : failed ? `${failed} failed` : '' }), icon('chevron', 'sm tool-chev')));
+  d.append(h('div', { cls: 'tool-group-body' }, tools.map(toolEl)));
+  return d;
+}
 function botEl(m, isLast) {
   const writing = !m.done && !m.stopped;
   const running = m.blocks.some((b) => b.t === 'tool' && b.status === 'running');
   const art = h('article', { cls: 'msg-bot', 'aria-label': 'Rook replied', 'aria-live': writing ? 'polite' : 'off' });
-  if (writing) art.append(h('div', { cls: 'status', role: 'status' }, h('span', { cls: 'mini-vinyl', 'aria-hidden': 'true' }, h('span')), running ? 'Reading the vault' : 'Writing'));
+  if (writing) art.append(h('div', { cls: 'status', role: 'status' }, h('span', { cls: 'mini-vinyl', 'aria-hidden': 'true' }, h('span')), running ? 'Working' : 'Writing'));
   let lastText = null;
+  let group = null;
   for (const b of m.blocks) {
+    if (b.t === 'tool') { if (!group) group = []; group.push(b); continue; }
+    if (group) { art.append(toolGroupEl(group)); group = null; }
     if (b.t === 'text') { lastText = MD.render(b.text, mdCtx); art.append(lastText); }
-    else if (b.t === 'tool') art.append(toolEl(b));
     else if (b.t === 'chips') art.append(h('div', { cls: 'chips' }, b.items.map((c) =>
       h('button', { type: 'button', cls: 'chip', 'aria-label': `${c.verb} ${c.path}, open note`, onClick: () => openNote(c.path) },
         h('span', { cls: 'chip-verb', text: c.verb }), h('span', { cls: 'chip-path', text: c.path }), h('span', { cls: 'chip-diff', text: c.diff })))));
@@ -290,6 +327,7 @@ function botEl(m, isLast) {
         b.path ? h('span', { cls: 'blocked-path', text: b.path }) : null,
         S.streaming ? null : pill('pill-ghost', 'Write to vault instead', () => send('Write that to a new note inside the vault instead.')))));
   }
+  if (group) art.append(toolGroupEl(group));
   if (writing && lastText && lastBlock(m).t === 'text') (lastText.lastElementChild || lastText).append(h('span', { cls: 'caret', 'aria-hidden': 'true' }));
   if (m.stopped) art.append(h('p', { cls: 'stopped', text: 'Stopped' }));
   if (m.error) art.append(h('p', { cls: 'error-line', role: 'alert' }, icon('alert', 'sm'), m.error.slice(0, 300), isLast ? pill('pill-ghost', 'Retry', retry) : null));
@@ -544,7 +582,7 @@ async function paintSettings() {
 
 // ---------- ask bar + compact strip ----------
 function autogrow() { const t = $('ask'); t.style.height = 'auto'; t.style.height = Math.min(180, t.scrollHeight) + 'px'; }
-function focusAsk() { (S.mini ? $('compact-input') : $('ask')).focus(); }
+function focusAsk() { (S.mini === 'bar' ? $('compact-input') : $('ask')).focus(); }
 function sendBtn(value, onSend) {
   return S.streaming
     ? h('button', { type: 'button', cls: 'send', 'aria-label': 'Stop generating', title: 'Stop (Esc)', onClick: stop }, h('span', { cls: 'stop-sq', 'aria-hidden': 'true' }))
@@ -564,13 +602,29 @@ function paintAsk() {
   $('compact-status').textContent = S.streaming ? (bot?.blocks.some((b) => b.t === 'tool' && b.status === 'running') ? 'Reading the vault' : 'Writing') : bot?.error ? 'Failed' : bot?.done && S.mini ? 'Done' : 'Quick capture';
   $('compact-send').replaceChildren(sendBtn($('compact-input').value, () => send($('compact-input').value)));
 }
-function toggleMini() { S.mini = !S.mini; VA.win.mini(S.mini); paintAsk(); setTimeout(focusAsk, 60); }
+// Mini modes: 'panel' is a side chat that shows the conversation; 'bar' is the quick-capture strip. false is the full window.
+function lastMini() { try { return localStorage.getItem('rook.mini') === 'bar' ? 'bar' : 'panel'; } catch { return 'panel'; } }
+function setMini(mode) {
+  mode = mode === 'bar' || mode === 'panel' ? mode : false;
+  if (mode === S.mini) return;
+  S.mini = mode;
+  if (mode) { try { localStorage.setItem('rook.mini', mode); } catch { /* not remembered */ } }
+  document.body.dataset.mini = mode || '';
+  $('ask').placeholder = mode === 'panel' ? 'Ask Rook…' : 'Ask about your vault, or tell Rook what to write…';
+  VA.win.mini(mode);
+  if (mode && S.view !== 'home') go('home'); else paint();
+  requestAnimationFrame(() => { $('scroller').scrollTop = $('scroller').scrollHeight; });
+  setTimeout(focusAsk, 60);
+}
+function toggleMini() { setMini(S.mini ? false : lastMini()); }
 
 // ---------- navigation ----------
 const NAV = [['home', 'Chat'], ['notes', 'Notes']];
 function go(view) {
   if (view !== S.view && S.view !== 'search' && S.view !== 'settings') S.prevView = S.view;
-  S.view = view; paint();
+  S.view = view;
+  if (S.mini && view !== 'home') { setMini(false); return; } // notes, search and settings need the full window
+  paint();
 }
 function paint() {
   const el = S.view === 'home' ? (S.cur && S.cur.msgs.length ? 'view-chat' : 'view-home') : 'view-' + S.view;
@@ -602,9 +656,15 @@ function wire() {
   $('search-icon').append(icon('search', 'sm'));
   $('go-home').addEventListener('click', () => go('home'));
   $('topbar-tools').append(tool('plus', 'New conversation', newChat, { title: 'New conversation (Ctrl N)' }),
-    tool('compact', 'Quick-capture strip', toggleMini, { title: 'Quick-capture strip (Ctrl M)' }),
+    tool('chat', 'Side chat', () => setMini('panel'), { title: 'Side chat' }),
+    tool('compact', 'Quick-capture bar', () => setMini('bar'), { title: 'Quick-capture bar' }),
     tool('settings', 'Settings', () => go('settings'), { title: 'Settings (Ctrl ,)' }));
-  $('compact-expand').append(tool('expand', 'Return to window', toggleMini, { title: 'Return to window (Ctrl M)' }));
+  $('compact-expand').append(tool('chat', 'Side chat', () => setMini('panel'), { title: 'Show the chat' }),
+    tool('expand', 'Return to window', () => setMini(false), { title: 'Return to window (Ctrl M)' }));
+  $('panel-mark').append(mark());
+  $('panel-tools').append(tool('plus', 'New conversation', newChat, { title: 'New conversation (Ctrl N)' }),
+    tool('compact', 'Quick-capture bar', () => setMini('bar'), { title: 'Shrink to a bar' }),
+    tool('expand', 'Return to window', () => setMini(false), { title: 'Return to window (Ctrl M)' }));
   $('win-min').addEventListener('click', () => VA.win.minimize());
   $('win-max').addEventListener('click', () => VA.win.maximize());
   $('win-close').addEventListener('click', () => VA.win.close());

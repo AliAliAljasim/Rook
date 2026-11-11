@@ -22,6 +22,11 @@
 </div>
 
 <div class="app" id="app">
+  <!-- SIDE CHAT: in the narrow panel mode this replaces the top bar. -->
+  <header class="panel-head">
+    <span id="panel-mark"></span><span class="word">rook</span>
+    <div class="panel-tools" id="panel-tools"></div>
+  </header>
   <header class="topbar">
     <button class="brand" id="go-home" aria-label="Home"><span id="brand-mark"></span><span class="word">rook</span></button>
     <nav class="topnav" id="topnav" aria-label="Sections"></nav>
@@ -73,7 +78,7 @@
   <span id="compact-mark"></span>
   <div class="compact-meta"><span class="compact-status" id="compact-status" role="status">Quick capture</span><input type="text" id="compact-input" placeholder="Capture a note or ask…" aria-label="Message" autocomplete="off"></div>
   <span id="compact-send"></span>
-  <span id="compact-expand"></span>
+  <span class="compact-tools" id="compact-expand"></span>
   <div class="compact-seek"></div>
 </div>
 

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, screen } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -96,7 +96,7 @@ function buildGraph(root) {
 const createdByApp = new Set(); // rel paths of notes this app created (so Undo can remove them)
 
 // ---- window ------------------------------------------------------------------------
-let win, child, savedBounds = null;
+let win, child, savedBounds = null, savedMax = false, miniMode = null;
 function createWindow() {
   win = new BrowserWindow({
     width: 980, height: 760, minWidth: 820, minHeight: 600, frame: false, title: 'Rook',
@@ -203,19 +203,56 @@ ipcMain.on('clipboard:write', (_, text) => clipboard.writeText(String(text)));
 
 ipcMain.on('win:minimize', () => win.minimize());
 ipcMain.on('win:maximize', () => (win.isMaximized() ? win.unmaximize() : win.maximize()));
-ipcMain.on('win:close', () => win.close());
-ipcMain.on('win:mini', (_, on) => {
-  if (on) {
-    savedBounds = win.getBounds();
-    win.setMinimumSize(366, 72);
-    win.setResizable(false);
-    win.setBounds({ x: savedBounds.x, y: savedBounds.y, width: 366, height: 72 });
+ipcMain.on('win:close', () => { saveMiniSpot(); win.close(); });
+// ---- mini modes: 'bar' (quick-capture strip) and 'panel' (side chat). Each remembers its own spot. ----
+const MINI = {
+  bar: { width: 420, height: 72, min: [420, 72], resizable: false },
+  panel: { width: 400, height: 720, min: [340, 420], resizable: true }
+};
+function miniBounds(mode) {
+  const m = MINI[mode];
+  const s = readJson(userFile('window.json'), {})[mode];
+  const ok = s && [s.x, s.y].every(Number.isFinite) && screen.getAllDisplays().some(({ workArea: a }) =>
+    s.x + m.min[0] > a.x && s.x < a.x + a.width && s.y + m.min[1] > a.y && s.y < a.y + a.height);
+  if (ok && mode === 'bar') return { x: s.x, y: s.y, width: m.width, height: m.height };
+  if (ok) return { x: s.x, y: s.y, width: Math.max(m.min[0], s.width || m.width), height: Math.max(m.min[1], s.height || m.height) };
+  // First time, on the screen the window is on: the bar sits bottom-centre, the side chat docks to the right edge.
+  const a = screen.getDisplayMatching(savedBounds).workArea;
+  if (mode === 'bar') return { x: a.x + Math.round((a.width - m.width) / 2), y: a.y + a.height - m.height - 24, width: m.width, height: m.height };
+  const height = Math.min(m.height, a.height - 24);
+  return { x: a.x + a.width - m.width - 12, y: a.y + Math.round((a.height - height) / 2), width: m.width, height };
+}
+function saveMiniSpot() {
+  if (!miniMode) return;
+  try {
+    const all = readJson(userFile('window.json'), {});
+    all[miniMode] = win.getBounds();
+    fs.writeFileSync(userFile('window.json'), JSON.stringify(all));
+  } catch { /* best effort */ }
+}
+ipcMain.on('win:mini', (_, mode) => {
+  mode = MINI[mode] ? mode : null;
+  if (mode === miniMode) return;
+  if (miniMode) saveMiniSpot();
+  else {
+    // A maximized window can't be shrunk or dragged, and its bounds are the whole screen:
+    // remember that it was maximized, keep its restored size, and un-maximize before going mini.
+    savedMax = win.isMaximized();
+    savedBounds = win.getNormalBounds();
+    if (savedMax) win.unmaximize();
+  }
+  miniMode = mode;
+  win.setResizable(true);
+  if (mode) {
+    win.setMinimumSize(...MINI[mode].min);
+    win.setBounds(miniBounds(mode));
+    win.setResizable(MINI[mode].resizable);
     win.setAlwaysOnTop(true);
   } else {
     win.setAlwaysOnTop(false);
-    win.setResizable(true);
     win.setMinimumSize(820, 600);
     if (savedBounds) win.setBounds(savedBounds);
+    if (savedMax) win.maximize();
   }
 });
 

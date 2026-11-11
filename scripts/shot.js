@@ -92,7 +92,11 @@ app.whenReady().then(async () => {
   await js(`[...document.querySelectorAll('.note-acts button')].find(b=>b.textContent.includes('Show on map')).click()`); await wait(1500); await shot('6-show-on-map');
   await js(`{const i=document.getElementById('search-input'); i.value='atlas'; i.dispatchEvent(new Event('input'))}`); await wait(400); await shot('9-search');
   await js(`{const i=document.getElementById('search-input'); i.value=''; i.dispatchEvent(new Event('input')); document.querySelector('button[aria-label="Settings"]').click()}`); await wait(400); await shot('10-settings');
-  w.setMinimumSize(366, 72); w.setSize(366, 72); await shot('11-compact');
+  await js(`[...document.querySelectorAll('#topnav button')][0].click()`);
+  await js(`document.querySelector('#topbar-tools button[aria-label="Side chat"]').click()`);
+  w.setMinimumSize(340, 420); w.setSize(400, 720); await wait(300); await shot('12-panel-chat');
+  await js(`document.querySelector('#panel-tools button[aria-label="New conversation"]').click()`); await shot('13-panel-home');
+  w.setMinimumSize(420, 72); w.setSize(420, 72); await shot('11-compact');
   fs.writeFileSync(path.join(out, 'errors.txt'), errors.join('\n') || 'none');
   app.quit();
 });

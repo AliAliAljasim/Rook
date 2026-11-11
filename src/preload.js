@@ -12,5 +12,5 @@ contextBridge.exposeInMainWorld('api', {
   loadChats: inv('chats:load'), saveChats: inv('chats:save'),
   copy: (t) => ipcRenderer.send('clipboard:write', t),
   win: { minimize: () => ipcRenderer.send('win:minimize'), maximize: () => ipcRenderer.send('win:maximize'),
-         close: () => ipcRenderer.send('win:close'), mini: (on) => ipcRenderer.send('win:mini', !!on) }
+         close: () => ipcRenderer.send('win:close'), mini: (mode) => ipcRenderer.send('win:mini', mode || false) }
 });

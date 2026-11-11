@@ -178,10 +178,15 @@ input, textarea { font: inherit; color: inherit; }
 .tool-label { font-family: 'DM Mono', monospace; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tool-label b { font-weight: 500; color: var(--fg); }
 .tool-status { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted-2); }
-.tool.running .tool-status { color: var(--accent); }
+.tool.running > summary .tool-status { color: var(--accent); }
 .tool.failed .tool-status, .tool.failed > summary > .icon:first-child { color: var(--danger); }
 .tool-chev { transition: transform .2s; color: var(--muted-2); }
-.tool[open] .tool-chev { transform: rotate(90deg); }
+.tool[open] > summary .tool-chev { transform: rotate(90deg); }
+.tool-group > summary > .icon:first-child { color: var(--muted-2); }
+.tool-group.running > summary .tool-label b { color: var(--fg-2); }
+.tool-group-body { margin: 2px 0 6px 18px; padding-left: 8px; border-left: 1px solid var(--panel-line); }
+.tool-group-body .tool { margin: 0; }
+.tool-group-body .tool > summary { min-height: 30px; }
 .tool-body { padding: 2px 10px 8px 38px; font-family: 'DM Mono', monospace; font-size: 12px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
 .tool-body div { display: flex; gap: 12px; }
 .tool-body span:last-child { margin-left: auto; color: var(--muted-2); }
@@ -386,9 +391,37 @@ kbd { font: 12px 'DM Mono', monospace; min-width: 24px; height: 24px; padding: 0
   .compact-meta input { border: 0; outline: 0; background: none; font-size: 14px; height: 24px; width: 100%; }
   .compact-meta input::placeholder { color: var(--muted-2); }
   .compact .send { width: 32px; height: 32px; }
+  .compact-tools { display: flex; }
+  .compact-tools .tool-btn { width: 30px; height: 30px; }
   .compact-seek { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: #2A2724; overflow: hidden; -webkit-app-region: no-drag; }
   .compact.busy .compact-seek::after { content: ""; display: block; width: 32%; height: 2px; background: var(--accent); animation: ask-slide 1.4s cubic-bezier(.5,0,.5,1) infinite; }
 }
+
+/* ---------- SIDE CHAT (the window becomes a narrow always-on-top chat panel) ---------- */
+.panel-head { display: none; }
+body[data-mini="panel"] .topbar { display: none; }
+body[data-mini="panel"] .panel-head { flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--line); -webkit-app-region: drag; user-select: none; }
+body[data-mini="panel"] .panel-head svg { width: 20px; height: 20px; display: block; }
+body[data-mini="panel"] .panel-head .word { font-size: 16px; }
+.panel-tools { margin-left: auto; display: flex; gap: 2px; -webkit-app-region: no-drag; }
+.panel-tools .tool-btn { width: 32px; height: 32px; }
+body[data-mini="panel"] .view-home { padding: 20px 16px 16px; gap: 16px; justify-content: flex-end; }
+body[data-mini="panel"] .hero h1 { font-size: 24px; }
+body[data-mini="panel"] .hero p { font-size: 14px; }
+body[data-mini="panel"] .quick-grid { grid-template-columns: 1fr; gap: 2px; }
+body[data-mini="panel"] .quick { flex-direction: row; align-items: center; gap: 12px; padding: 8px; background: none; border-color: transparent; }
+body[data-mini="panel"] .quick:hover { background: rgba(255,255,255,.06); transform: none; }
+body[data-mini="panel"] .quick-icon { width: 28px; height: 28px; flex: none; }
+body[data-mini="panel"] .quick-title { font-size: 14px; font-weight: 500; }
+body[data-mini="panel"] .quick-desc, body[data-mini="panel"] .view-home .sec { display: none; }
+body[data-mini="panel"] .view-chat { padding: 8px 16px 16px; }
+body[data-mini="panel"] .back-link { margin-bottom: 4px; }
+body[data-mini="panel"] .msg-user p { max-width: 92%; font-size: 14px; }
+body[data-mini="panel"] .msg-bot { margin-bottom: 20px; }
+body[data-mini="panel"] .md { overflow-wrap: anywhere; }
+body[data-mini="panel"] .md table { display: block; overflow-x: auto; }
+body[data-mini="panel"] .ask-row { padding: 8px 12px 4px; }
+body[data-mini="panel"] .ask-hint { padding: 0 12px 8px; font-size: 11px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 0ms !important; }
