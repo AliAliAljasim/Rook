@@ -15,14 +15,6 @@ const loadCfg = () => {
 };
 const toWsl = (p) => p.replace(/^([A-Za-z]):[\\/]/, (_, d) => `mnt/${d.toLowerCase()}/`).replace(/\\/g, '/');
 
-function ensureCalendar(vaultWin) {
-  const dir = path.join(vaultWin, 'Calendar');
-  const f = path.join(dir, 'calendar.ics');
-  if (fs.existsSync(f)) return;
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(f, 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Vault Assistant//EN\r\nEND:VCALENDAR\r\n');
-}
-
 let win, child;
 function createWindow() {
   win = new BrowserWindow({
@@ -40,7 +32,6 @@ ipcMain.on('chat:cancel', () => child && child.kill());
 ipcMain.on('chat:send', (e, { prompt, sessionId }) => {
   const cfg = loadCfg();
   const vaultWsl = toWsl(cfg.vaultWin);
-  try { ensureCalendar(cfg.vaultWin); } catch (err) { e.sender.send('chat:event', { type: 'error', text: String(err) }); }
 
   // Policy lives outside the vault so the agent cannot modify it.
   const policyFile = path.join(app.getPath('userData'), 'policy.json');

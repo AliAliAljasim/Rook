@@ -5,4 +5,3 @@ Run in Windows PowerShell from this folder (copy it to C: first, or use \\wsl$ p
   npm install
   npm start         # dev
   npm run dist      # builds dist/vault-assistant-setup-0.1.0.exe (NSIS, per-user, like Groove)
-Calendar: <vault>/Calendar/calendar.ics (created on first run).
