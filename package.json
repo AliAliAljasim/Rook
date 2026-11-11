@@ -6,20 +6,56 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win nsis"
+    "dist:win": "electron-builder --win --x64",
+    "release:win": "bash scripts/release.sh"
   },
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^45.3.0",
+    "electron-builder": "^26.18.0",
+    "rcedit": "^5.0.2"
   },
   "build": {
-    "appId": "com.alijas.vaultassistant",
-    "files": ["src/**/*", "package.json"],
-    "win": { "target": "nsis" },
+    "appId": "com.alialialjasim.vaultassistant",
+    "productName": "Vault Assistant",
+    "files": [
+      "src/**/*",
+      "package.json",
+      "build/icon.ico",
+      "build/icon.png"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico",
+      "executableName": "vault-assistant",
+      "signAndEditExecutable": false
+    },
+    "afterPack": "scripts/after-pack.js",
     "nsis": {
       "oneClick": true,
       "perMachine": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Vault Assistant",
+      "uninstallDisplayName": "Vault Assistant",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
       "artifactName": "vault-assistant-setup-${version}.${ext}"
-    }
-  }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "AliAliAljasim",
+        "repo": "note-taking-assistant",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  },
+  "author": "AliAliAljasim"
 }

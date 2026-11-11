@@ -70,5 +70,10 @@ ipcMain.on('chat:send', (e, { prompt, sessionId }) => {
   child.on('close', (code) => e.sender.send('chat:event', { type: 'done', code, stderr: code ? err.trim() : '' }));
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  if (app.isPackaged) {
+    try { require('electron-updater').autoUpdater.checkForUpdatesAndNotify(); } catch { /* offline or no release yet */ }
+  }
+});
 app.on('window-all-closed', () => app.quit());
