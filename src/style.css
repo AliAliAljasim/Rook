@@ -614,3 +614,7 @@ body[data-mini="panel"] .modal-layer { padding: 56px 8px 8px; }
 .setup-foot { display: flex; justify-content: flex-end; }
 body:has(.setup-layer) .window-controls { position: fixed; z-index: 41; }
 body:has(.setup-layer) .topbar { z-index: auto; }
+.chip-failed { cursor: default; border-color: var(--danger); }
+.chip-failed .chip-verb { color: var(--danger); }
+.chip-static { cursor: default; }
+.chip-static:hover { background: none; border-color: var(--b3); }

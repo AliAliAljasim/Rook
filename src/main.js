@@ -9,6 +9,7 @@ const schedule = require('./schedule');
 const voiceEngine = require('./voice');
 const scan = require('./vaultscan');
 const clip = require('./clip');
+const moves = require('./moves');
 
 const DEFAULTS = {
   // vault, CLI path and name are machine-specific: blank until the first-run setup fills them in
@@ -658,6 +659,85 @@ ipcMain.handle('change:revert', async (_, { id, rel, created }) => {
   return true;
 });
 
+// ---- moving, renaming, deleting: the agent asks with a <files> block, the app does it ---
+// Deleted items go to the Recycle Bin (restored from there; Undo here covers moves and link fixes).
+// Every path goes through the guard; nothing is overwritten; hidden folders (.obsidian, .claude) are left alone.
+// Notes whose [[links]] are rewritten get a backup first, so one Undo puts everything back.
+const relOf = (root, abs) => path.relative(fs.realpathSync.native(root), abs).split(path.sep).join('/');
+function filesUnder(abs, rel) {
+  if (!fs.statSync(abs).isDirectory()) return [rel];
+  return fs.readdirSync(abs, { withFileTypes: true }).flatMap((e) => filesUnder(path.join(abs, e.name), `${rel}/${e.name}`));
+}
+ipcMain.handle('vault:move', async (_, list) => {
+  const root = loadCfg().vaultWin;
+  const done = [], failed = [], deleted = [], map = [];
+  for (const m of (Array.isArray(list) ? list : []).slice(0, 200)) {
+    if (m?.op === 'delete') { // to the Recycle Bin, where the user can restore it
+      const p = String(m.path || '');
+      try {
+        if (!moves.okPath(p)) throw new Error('not a path inside the vault');
+        const a = resolveInside(root, p);
+        if (!fs.existsSync(a)) throw new Error('not found');
+        await shell.trashItem(a);
+        deleted.push({ path: relOf(root, a) });
+      } catch (e) { failed.push({ from: p, to: '', del: true, error: e.message.replace(/^blocked: /, '') }); }
+      continue;
+    }
+    const from = String(m?.from || ''), to = String(m?.to || '');
+    try {
+      if (!moves.okPath(from) || !moves.okPath(to)) throw new Error('not a path inside the vault');
+      const a = resolveInside(root, from), b = resolveInside(root, to);
+      if (!fs.existsSync(a)) throw new Error('not found');
+      if (fs.existsSync(b)) throw new Error('something is already there');
+      if ((b + path.sep).toLowerCase().startsWith((a + path.sep).toLowerCase())) throw new Error('a folder cannot go inside itself');
+      const fromRel = relOf(root, a), toRel = relOf(root, b);
+      const inside = filesUnder(a, fromRel);
+      fs.mkdirSync(path.dirname(b), { recursive: true });
+      fs.renameSync(a, b);
+      done.push({ from: fromRel, to: toRel });
+      for (const f of inside) map.push({ from: f, to: toRel + f.slice(fromRel.length) });
+    } catch (e) { failed.push({ from, to, error: e.message.replace(/^blocked: /, '') }); }
+  }
+  walkCache.at = 0;
+  const edited = [];
+  if (map.length) {
+    for (const f of walkVault(root)) {
+      try {
+        const abs = resolveInside(root, f.rel);
+        if (fs.statSync(abs).size > 1024 * 1024) continue;
+        const text = fs.readFileSync(abs, 'utf8'), next = moves.rewriteLinks(text, map);
+        if (next === text) continue;
+        const id = `mv${Date.now()}${edited.length}`;
+        fs.mkdirSync(userFile('backups'), { recursive: true });
+        fs.writeFileSync(backupFile(id), text);
+        fs.writeFileSync(abs, next);
+        edited.push({ rel: f.rel, id });
+      } catch { /* unreadable: its links stay as they were */ }
+    }
+  }
+  walkCache.at = 0;
+  return { done, failed, edited, deleted };
+});
+// Undo: links first (at the notes' new places), then each move backwards, last one first.
+ipcMain.handle('vault:moveUndo', (_, r) => {
+  const root = loadCfg().vaultWin;
+  let ok = true;
+  for (const e of Array.isArray(r?.edited) ? r.edited : []) {
+    try { fs.copyFileSync(backupFile(e.id), resolveInside(root, String(e.rel))); } catch { ok = false; }
+  }
+  for (const m of (Array.isArray(r?.done) ? r.done : []).slice().reverse()) {
+    try {
+      if (!moves.okPath(m.from) || !moves.okPath(m.to)) throw new Error('bad path');
+      const a = resolveInside(root, m.to), b = resolveInside(root, m.from);
+      if (!fs.existsSync(a) || fs.existsSync(b)) throw new Error('changed since');
+      fs.mkdirSync(path.dirname(b), { recursive: true });
+      fs.renameSync(a, b);
+    } catch { ok = false; }
+  }
+  walkCache.at = 0;
+  return ok;
+});
+
 // When a reply finishes and nobody is looking (Rook is in the tray, minimized, or behind other apps), say so.
 function tellReplyDone(code, reply) {
   if (!loadCfg().notify || !win || win.isDestroyed()) return;
@@ -665,7 +745,7 @@ function tellReplyDone(code, reply) {
   if (!away) return;
   if (code) return notifyUser('Rook could not finish', 'Open Rook to see what went wrong.');
   const asks = reply.includes('<choices>');
-  const text = reply.split('<choices>')[0].replace(/\[\[([^\]|]*\|)?([^\]]*)\]\]/g, '$2').replace(/[#*`>_]/g, '').replace(/\s+/g, ' ').trim();
+  const text = moves.splitMoves(reply).text.split('<choices>')[0].replace(/\[\[([^\]|]*\|)?([^\]]*)\]\]/g, '$2').replace(/[#*`>_]/g, '').replace(/\s+/g, ' ').trim();
   notifyUser(asks ? 'Rook has a question for you' : 'Rook has replied', text.length > 180 ? text.slice(0, 179) + '…' : text || 'The reply is ready.');
 }
 

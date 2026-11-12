@@ -85,7 +85,8 @@ for (const [c, f] of Object.entries({ 'config:get': () => cfg, 'config:set': (_,
   'clip:fetch': (_, url) => ({ ok: true, url, title: 'How book printing works', text: 'Offset printing uses plates. '.repeat(20), truncated: false }), 'schedule:runPrompt': () => ({ ok: true, text: 'Done.' }), 'note:undoCreate': () => true,
   'voice:status': () => ({ installed: false, installing: false, percent: 0, sizeMb: 157 }), 'voice:install': () => ({ ok: true }), 'voice:remove': () => true, 'voice:transcribe': () => 'hello from the microphone',
   'setup:detect': () => ({ name: 'Sam', vaults: ['C:\\Users\\sam\\Documents\\Vault'], claudePath: '/home/sam/.local/bin/claude', wsl: true }),
-  'setup:checkClaude': () => ({ ok: true, version: '2.1.0 (Claude Code)' }), 'vault:create': () => ({ ok: true }) }))
+  'setup:checkClaude': () => ({ ok: true, version: '2.1.0 (Claude Code)' }), 'vault:create': () => ({ ok: true }),
+  'vault:move': (_, l) => ({ done: l.slice(0, 2), failed: l.slice(2).map((m) => ({ ...m, error: 'something is already there' })), edited: [{ rel: 'Home.md', id: 'x' }, { rel: 'Learning.md', id: 'y' }], deleted: [{ path: 'Scratch.md' }] }), 'vault:moveUndo': () => true }))
   ipcMain.handle(c, f);
 ipcMain.on('config:initial', (e) => { e.returnValue = { theme: THEME, textSize: 'regular' }; });
 ipcMain.on('chat:send', (_, { prompt }) => { lastPrompt = prompt; });
@@ -116,6 +117,11 @@ app.whenReady().then(async () => {
   await js(`[...document.querySelectorAll('#view-home .row')].find(b=>b.textContent.includes('Atlas: what')).click()`); await wait(300);
   await js(`document.getElementById('scroller').scrollTop = 0`); await snap('2-chat');
   await js(`document.getElementById('scroller').scrollTop = 99999`); await snap('3-chat-bottom');
+  // moves: the reply's <moves> block is hidden and carried out by the app
+  await js(`{const b=lastBot(); b.blocks.push({t:'text',text:'Moved them into Learning/.\\n\\n<moves>\\n- Coding Languages.md -> Learning/Coding Languages.md\\n- Python.md -> Learning/Python.md\\n- Hash.md -> Learning/Hash.md\\n</moves>'}); runMoves(b)}`); await wait(400);
+  await js(`document.getElementById('scroller').scrollTop = 99999`); await snap('3a-moves');
+  await check('moves block hidden', `!document.querySelector('.msg-bot:last-of-type').textContent.includes('<moves>')`);
+  await check('move chips', `[...document.querySelectorAll('.chip-verb')].map(e=>e.textContent).filter(t=>/oved/.test(t))`);
   // change viewer
   await js(`document.querySelector('.chip-act').click()`); await wait(300); await snap('3b-changes');
   await check('diff lines (add, del)', `[document.querySelectorAll('.diff-line.add').length, document.querySelectorAll('.diff-line.del').length]`);

@@ -6,7 +6,7 @@
 // ---------- answer buttons ----------
 // Rook ends a question with <choices>- option ...</choices>. The block is taken out of the text and shown as buttons.
 function splitChoices(text) {
-  const src = String(text || '');
+  const src = RookMoves.splitMoves(String(text || '')).text; // a <moves> block is the app's to carry out, not text to show
   const i = src.lastIndexOf('<choices>');
   if (i < 0) return { text: src.replace(/<c(h(o(i(c(e(s)?)?)?)?)?)?$/, ''), choices: [] }; // hide a tag that is still streaming in
   const body = src.slice(i + 9), j = body.indexOf('</choices>');
@@ -418,4 +418,38 @@ async function openSetup() {
   ready();
   checkVault(); checkClaude();
   name.focus();
+}
+
+// ---------- moving notes ----------
+// Rook asks for moves, renames and deletes with a <files> block at the end of its reply (src/moves.js). Once the
+// reply is finished the app does them and shows each as a chip; one Undo covers the moves, deletes are in the Recycle Bin.
+async function runMoves(bot) {
+  const { moves } = RookMoves.splitMoves(bot.blocks.filter((b) => b.t === 'text').map((b) => b.text).join('\n'));
+  if (!moves.length) return;
+  let r;
+  try { r = await VA.moves.run(moves); } catch { r = { done: [], edited: [], failed: moves.map((m) => ({ ...m, error: 'could not be moved' })) }; }
+  bot.blocks.push({ t: 'moves', done: r.done, failed: r.failed, edited: r.edited, deleted: r.deleted || [], undone: false });
+  if (S.note && (r.deleted || []).some((d) => S.note.file === d.path || S.note.file.startsWith(d.path + '/'))) S.note = null;
+  persist(); loadNotes(); scheduleChat();
+  if (r.failed.length) toast(`${r.failed.length === 1 ? 'One action' : r.failed.length + ' actions'} could not be done.`, { error: true });
+}
+function movesEl(b) {
+  const where = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : 'top level');
+  const undo = async () => {
+    if (S.streaming) return toast('Wait for the reply to finish, or stop it first.');
+    const ok = await VA.moves.undo({ done: b.done, edited: b.edited }).catch(() => false);
+    b.undone = true; persist(); loadNotes(); scheduleChat();
+    toast(ok ? 'Moved back.' : 'Some items had changed since, so not everything was moved back.', { error: !ok });
+  };
+  const n = b.edited.length;
+  return h('div', { cls: 'chips' },
+    b.done.map((m) => h('span', { cls: 'chip-wrap' + (b.undone ? ' reverted' : '') },
+      h('button', { type: 'button', cls: 'chip', 'aria-label': `Moved ${m.from} to ${m.to}`, title: `${m.from} → ${m.to}`,
+        onClick: () => { if (!b.undone && /\.md$/i.test(m.to)) openNote(m.to); } },
+        h('span', { cls: 'chip-verb', text: b.undone ? 'Moved back' : 'Moved' }), h('span', { cls: 'chip-path', text: m.to }), h('span', { cls: 'chip-diff', text: `from ${where(m.from)}` })))),
+    (b.deleted || []).map((d) => h('span', { cls: 'chip-wrap' }, h('span', { cls: 'chip chip-static', title: 'Restore it from the Recycle Bin if you need it back' },
+      h('span', { cls: 'chip-verb', text: 'Deleted' }), h('span', { cls: 'chip-path', text: d.path }), h('span', { cls: 'chip-diff', text: 'in Recycle Bin' })))),
+    b.failed.map((m) => h('span', { cls: 'chip-wrap' }, h('span', { cls: 'chip chip-failed', title: m.del ? `delete ${m.from}` : `${m.from} → ${m.to}` },
+      h('span', { cls: 'chip-verb', text: m.del ? 'Not deleted' : 'Not moved' }), h('span', { cls: 'chip-path', text: m.from }), h('span', { cls: 'chip-diff', text: m.error })))),
+    b.done.length && !b.undone ? pill('pill-ghost', `Undo ${b.done.length === 1 ? 'move' : 'moves'}${n ? ` (links fixed in ${n} note${n === 1 ? '' : 's'})` : ''}`, undo, 'undo') : null);
 }

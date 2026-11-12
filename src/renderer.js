@@ -203,6 +203,7 @@ function onEvent(ev) {
     if (ev.code && !bot.stopped) bot.error = ev.stderr || `claude exited with code ${ev.code}`;
     S.cur.when = Date.now();
     persist(); loadNotes(); paintAsk();
+    if (!ev.code && !bot.stopped) runMoves(bot); // notes the reply asked to move
     installWhenIdle(); // an update that finished downloading mid-reply waited for this
   }
   scheduleChat();
@@ -336,6 +337,7 @@ function botEl(m, isLast) {
       h('button', { type: 'button', cls: 'chip', 'aria-label': `${c.verb} ${c.path}, open note`, onClick: () => openNote(c.path) },
         h('span', { cls: 'chip-verb', text: c.reverted ? 'Undone' : c.verb }), h('span', { cls: 'chip-path', text: c.path }), h('span', { cls: 'chip-diff', text: c.diff })),
       c.id ? h('button', { type: 'button', cls: 'chip chip-act', 'aria-label': `See what changed in ${c.path}`, title: 'See what changed, or undo it', onClick: () => openChanges(c) }, icon('undo', 'sm'), 'Changes') : null))));
+    else if (b.t === 'moves') art.append(movesEl(b));
     else if (b.t === 'blocked') art.append(h('div', { cls: 'blocked', role: 'note' }, h('span', { cls: 'blocked-icon' }, icon('lock', 'sm')),
       h('div', { cls: 'blocked-body' }, h('span', { cls: 'eyebrow', text: 'Read-only · outside the vault' }),
         h('p', { text: 'Rook can read this file but can’t change it. It can write the result to a new note in your vault instead.' }),

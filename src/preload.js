@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('api', {
   setTextSize: (size) => webFrame.setZoomFactor(ZOOM[size] || 1),
   searchNotes: inv('vault:search'), attach: inv('attach:save'),
   change: { get: inv('change:get'), revert: inv('change:revert') },
+  moves: { run: inv('vault:move'), undo: inv('vault:moveUndo') },
   voice: { status: inv('voice:status'), install: inv('voice:install'), remove: inv('voice:remove'), transcribe: inv('voice:transcribe'),
            onProgress: (cb) => ipcRenderer.on('voice:progress', (_, st) => cb(st)), windows: () => ipcRenderer.send('voice:start') },
   attachDiscard: inv('attach:discard'), attachSent: (rels) => ipcRenderer.send('attach:sent', rels),
