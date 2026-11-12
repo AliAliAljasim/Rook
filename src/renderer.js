@@ -121,6 +121,9 @@ function describeTool(name, input = {}) {
     case 'Edit': case 'MultiEdit': return { verb: 'Edited', rest: ' ' + displayPath(fp || ''), lines: [{ a: displayPath(fp || ''), b: '' }] };
     case 'Write': return { verb: 'Wrote', rest: ' ' + displayPath(fp || ''), lines: [{ a: displayPath(fp || ''), b: '' }] };
     case 'Bash': return { verb: 'Ran', rest: ' ' + String(input.description || input.command || '').slice(0, 80), lines: input.command ? [{ a: String(input.command), b: '' }] : [] };
+    case 'WebSearch': return { verb: 'Searched the web', rest: ` for “${input.query || ''}”`, lines: [{ a: String(input.query || ''), b: 'web' }] };
+    case 'ToolSearch': return { verb: 'Got ready', rest: ' ' + String(input.query || '').replace(/^select:/, '').split(',').map((t) => (t === 'WebSearch' ? 'web search' : t)).join(', '), lines: [] }; // the CLI loading a tool before its first use
+    case 'WebFetch': return { verb: 'Tried to open', rest: ' ' + String(input.url || ''), lines: [{ a: String(input.url || ''), b: '' }] };
     case 'Skill': return { verb: 'Used skill', rest: ' ' + (input.skill || ''), lines: [] };
     case 'Task': case 'Agent': return { verb: 'Delegated', rest: ' ' + (input.description || ''), lines: [] };
     default: return { verb: name, rest: '', lines: [] };
@@ -581,13 +584,21 @@ async function paintSettings() {
   const paintProjects = () => {
     const list = S.cfg.projects || [];
     const pName = h('input', { cls: 'sp-input', placeholder: 'Name, e.g. rook', 'aria-label': 'Project name' });
-    const pPath = h('input', { cls: 'sp-input mono', placeholder: 'Folder, e.g. /home/you/project or C:\\Users\\you\\project', 'aria-label': 'Project folder', spellcheck: 'false' });
+    const pPath = h('input', { cls: 'sp-input mono', placeholder: 'Folder, e.g. ~/project, /home/you/project or C:\\Users\\you\\project', 'aria-label': 'Project folder', spellcheck: 'false' });
     const add = async () => {
       if (!pName.value.trim() || !pPath.value.trim()) return toast('Give the project a name and a folder.', { error: true });
+      const r = await VA.checkProject(pPath.value); // a WSL path, checked to exist
+      if (!r.ok) return toast(r.reason, { error: true });
       const before = list.length;
-      await save({ projects: [...list, { name: pName.value, path: pPath.value }] }, 'Project added.');
+      await save({ projects: [...list, { name: pName.value, path: r.path }] }, 'Project added.');
       if ((S.cfg.projects || []).length === before) toast('That folder path was not understood. Use a full path.', { error: true });
       paintProjects();
+    };
+    const pick = (wsl) => async () => {
+      const p = await VA.pickFolder({ wsl });
+      if (!p) return;
+      pPath.value = p;
+      if (!pName.value) pName.value = p.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
     };
     [pName, pPath].forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); }));
     projHost.replaceChildren(
@@ -595,8 +606,8 @@ async function paintSettings() {
         h('dd', null, tool('trash', `Remove ${p.name}`, async () => { await save({ projects: list.filter((_, k) => k !== i) }, 'Project removed.'); paintProjects(); }, { title: 'Remove' })))))
         : h('p', { cls: 'sp-help', text: 'No projects yet. Add one and Rook will know where it lives when you mention it by name.' }),
       h('div', { cls: 'sp-row proj-add' }, pName, pPath,
-        pill('pill-ghost', 'Browse', async () => { const p = await VA.pickFolder(); if (p) { pPath.value = p; if (!pName.value) pName.value = p.replace(/[\\/]+$/, '').split(/[\\/]/).pop(); } }),
-        pill('pill-ghost', 'Add', add)));
+        h('div', { cls: 'proj-btns' }, pill('pill-ghost', 'Browse WSL', pick(true)), pill('pill-ghost', 'Browse Windows', pick(false)),
+          pill('pill-ghost', 'Add', add))));
   };
   paintProjects();
 
@@ -674,6 +685,10 @@ async function paintSettings() {
   paintPrompts();
 
   // Notifications
+  const webHost = h('div');
+  const paintWeb = () => webHost.replaceChildren(seg([['on', 'On'], ['off', 'Off']], S.cfg.webSearch === false ? 'off' : 'on',
+    async (v) => { await save({ webSearch: v === 'on' }); paintWeb(); }, 'Web search'));
+  paintWeb();
   const notifyHost = h('div');
   const paintNotify = () => notifyHost.replaceChildren(seg([['on', 'On'], ['off', 'Off']], S.cfg.notify === false ? 'off' : 'on',
     async (v) => { await save({ notify: v === 'on' }, null); paintNotify(); }, 'Tell me when a reply is ready'));
@@ -714,7 +729,9 @@ async function paintSettings() {
       card('set-access', 'Access',
         h('div', { cls: 'sp-line' }, h('span', { text: 'Can read' }), scopeHost), scopeHelp,
         h('div', { cls: 'sp-line' }, h('span', { text: 'Can write' }), h('span', { cls: 'sp-fixed' }, icon('lock', 'sm'), 'Vault only')),
-        h('p', { cls: 'sp-help', text: 'This is fixed. Files elsewhere are read-only; a request to change one is written as a new note inside the vault.' })),
+        h('p', { cls: 'sp-help', text: 'This is fixed. Files elsewhere are read-only; a request to change one is written as a new note inside the vault.' }),
+        h('div', { cls: 'sp-line' }, h('span', { text: 'Web search' }), webHost),
+        h('p', { cls: 'sp-help', text: 'Rook can search the web and cites its sources. It cannot open web pages itself; to bring a whole page in, clip it with /clip and its address.' })),
       card('set-assistant', 'Assistant',
         h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Claude CLI path, inside WSL' })), claude),
         h('p', { cls: 'sp-help', text: 'Rook runs Claude Code in WSL. Sign in once with “claude auth login” (or make login).' }),
@@ -749,7 +766,7 @@ function updateText(u) {
     case 'downloading': return `Updating to version ${u.version || ''}… ${u.percent || 0}%. Rook restarts when it is done.`;
     case 'ready': return `Version ${u.version} is ready. Restarting…`;
     case 'error': return 'Could not check for updates.';
-    case 'dev': return 'Updates are off in the development build.';
+    case 'dev': return S.cfg?.trial ? 'Updates are off in this test copy.' : 'Updates are off in the development build.';
     default: return 'Rook checks for updates on its own.';
   }
 }
@@ -795,7 +812,7 @@ function paintAsk() {
   $('ask-ctx-slot').replaceChildren(...(ctx ? [h('span', { cls: 'ask-ctx' }, icon('file', 'sm'), h('span', { text: `About: ${S.note.title}${S.noteSel ? ' · highlighted text' : ''}` }),
     h('button', { type: 'button', 'aria-label': dropLabel, title: dropLabel, onClick: () => { if (S.noteSel) S.noteSel = ''; else S.noteCtx = false; paintAsk(); } }, icon('x', 'sm')))] : []));
   const agent = agentLabel();
-  $('ask-hint').replaceChildren(S.cfg.readScope === 'vault' ? 'Reads only inside your vault · writes only inside your vault' : 'Reads anywhere on this PC · writes only inside your vault',
+  $('ask-hint').replaceChildren((S.cfg.readScope === 'vault' ? 'Reads only inside your vault · writes only inside your vault' : 'Reads anywhere on this PC · writes only inside your vault') + (S.cfg.webSearch === false ? '' : ' · searches the web'),
     ' · ', h('button', { type: 'button', cls: 'hint-btn', title: 'Choose the model and effort (or type /agent)', onClick: () => (popKind === 'agent' ? closePop() : openAgentPop()) }, agent || '/agent'));
   // compact strip
   const bot = lastBot();
@@ -822,10 +839,14 @@ function toggleMini() { setMini(S.mini ? false : lastMini()); }
 // ---------- navigation ----------
 const NAV = [['home', 'Chat'], ['notes', 'Notes'], ['tasks', 'Tasks']];
 function go(view) {
+  const from = S.view;
   if (view !== S.view && S.view !== 'settings') S.prevView = S.view;
   S.view = view;
   if (S.mini && view !== 'home') { setMini(false); return; } // notes and settings need the full window
   paint();
+  // The pages share one scroller, so coming back to a chat from another page would land wherever that page was
+  // scrolled (usually the top). Back in the chat, show its latest message.
+  if (view === 'home' && from !== 'home' && S.cur && S.cur.msgs.length) requestAnimationFrame(() => { $('scroller').scrollTop = $('scroller').scrollHeight; });
 }
 function paint() {
   const el = S.view === 'home' ? (S.cur && S.cur.msgs.length ? 'view-chat' : 'view-home') : 'view-' + S.view;
@@ -967,6 +988,7 @@ function wire() {
   const started = Date.now();
   wire();
   S.cfg = await VA.getConfig();
+  if (S.cfg.trial) { document.body.dataset.trial = '1'; document.title = 'Rook (test copy)'; }
   S.version = await VA.version().catch(() => '');
   S.update = await VA.update.get().catch(() => S.update);
   applyTheme();

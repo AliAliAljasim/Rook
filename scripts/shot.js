@@ -86,7 +86,7 @@ for (const [c, f] of Object.entries({ 'config:get': () => cfg, 'config:set': (_,
   'voice:status': () => ({ installed: false, installing: false, percent: 0, sizeMb: 157 }), 'voice:install': () => ({ ok: true }), 'voice:remove': () => true, 'voice:transcribe': () => 'hello from the microphone',
   'setup:detect': () => ({ name: 'Sam', vaults: ['C:\\Users\\sam\\Documents\\Vault'], claudePath: '/home/sam/.local/bin/claude', wsl: true }),
   'setup:checkClaude': () => ({ ok: true, version: '2.1.0 (Claude Code)' }), 'vault:create': () => ({ ok: true }),
-  'vault:move': (_, l) => ({ done: l.slice(0, 2), failed: l.slice(2).map((m) => ({ ...m, error: 'something is already there' })), edited: [{ rel: 'Home.md', id: 'x' }, { rel: 'Learning.md', id: 'y' }], deleted: [{ path: 'Scratch.md' }] }), 'vault:moveUndo': () => true }))
+  'vault:move': (_, l) => ({ done: l.slice(0, 2), failed: l.slice(2).map((m) => ({ ...m, error: 'something is already there' })), edited: [{ rel: 'Home.md', id: 'x' }, { rel: 'Learning.md', id: 'y' }], deleted: [{ path: 'Scratch.md' }] }), 'vault:moveUndo': () => true, 'project:check': (_, p) => ({ ok: true, path: p }) }))
   ipcMain.handle(c, f);
 ipcMain.on('config:initial', (e) => { e.returnValue = { theme: THEME, textSize: 'regular' }; });
 ipcMain.on('chat:send', (_, { prompt }) => { lastPrompt = prompt; });
@@ -117,6 +117,10 @@ app.whenReady().then(async () => {
   await js(`[...document.querySelectorAll('#view-home .row')].find(b=>b.textContent.includes('Atlas: what')).click()`); await wait(300);
   await js(`document.getElementById('scroller').scrollTop = 0`); await snap('2-chat');
   await js(`document.getElementById('scroller').scrollTop = 99999`); await snap('3-chat-bottom');
+  // back to a chat from another page: it shows the latest message, not the top
+  await js(`document.getElementById('scroller').scrollTop = 0; go('notes')`); await wait(200);
+  await js(`go('home')`); await wait(300);
+  await check('chat at latest message after Notes and back', `(()=>{const s=document.getElementById('scroller');return s.scrollHeight-s.scrollTop-s.clientHeight<4})()`);
   // moves: the reply's <moves> block is hidden and carried out by the app
   await js(`{const b=lastBot(); b.blocks.push({t:'text',text:'Moved them into Learning/.\\n\\n<moves>\\n- Coding Languages.md -> Learning/Coding Languages.md\\n- Python.md -> Learning/Python.md\\n- Hash.md -> Learning/Hash.md\\n</moves>'}); runMoves(b)}`); await wait(400);
   await js(`document.getElementById('scroller').scrollTop = 99999`); await snap('3a-moves');
@@ -211,6 +215,7 @@ app.whenReady().then(async () => {
   await js(`[...document.querySelectorAll('#set-notify .segmented button')].find(b=>b.textContent==='Off').click()`); await wait(200);
   notes.push('notify after switching off: ' + cfg.notify);
   await js(`document.getElementById('set-notify').scrollIntoView()`); await snap('10f-settings-notify');
+  await js(`document.getElementById('set-access').scrollIntoView()`); await snap('10g-settings-access');
   await js(`document.getElementById('set-projects').scrollIntoView()`); await snap('10a-settings-projects');
   await js(`document.getElementById('set-voice').scrollIntoView()`); await snap('10b-settings-look');
   await js(`document.getElementById('set-keys').scrollIntoView()`); await snap('10c-settings-keys');

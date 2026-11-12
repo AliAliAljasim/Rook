@@ -134,7 +134,7 @@ function drawHealth() {
 }
 
 // ---------- WEB CLIPPING: /clip <address>, or a message that is only an address ----------
-// Rook fetches the page itself and gives the agent its text, so the agent still has no web access.
+// Rook fetches the page itself and gives the agent its text; the agent cannot open pages (WebFetch is denied).
 const URL_ONLY = /^https?:\/\/\S+$/i;
 let clipping = false;
 function clipLead(r) {

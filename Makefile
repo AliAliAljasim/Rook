@@ -1,4 +1,4 @@
-.PHONY: help login install start check test dist release clean
+.PHONY: help login install start check test try dist release clean
 
 help:        ## list targets
 	@grep -E '^[a-z]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/ -/'
@@ -17,6 +17,9 @@ check:       ## syntax-check all source files
 
 test:        ## run unit tests (vault write guard)
 	npm test
+
+try:         ## build the working tree as a test copy in %TEMP% and start it; deletes itself on quit (FRESH=1: no settings)
+	bash scripts/try.sh
 
 dist:        ## build the Windows installer from WSL -> dist/rook-setup-<ver>.exe
 	WINEDEBUG=-all npm run dist:win

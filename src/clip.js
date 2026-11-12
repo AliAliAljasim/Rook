@@ -1,5 +1,5 @@
 // Web clipping. Rook itself fetches the page and hands its text to the agent, so the agent stays
-// without web access (WebFetch and WebSearch remain denied in src/policy.js).
+// without opening pages itself (WebFetch remains denied in src/policy.js; WebSearch is a setting).
 // pageText() turns HTML into plain readable text with no DOM; it is tested in test/clip.test.js.
 
 const NAMED = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', hellip: '…', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', copy: '©', reg: '®', trade: '™', middot: '·', bull: '•', laquo: '«', raquo: '»', euro: '€', pound: '£', deg: '°' };

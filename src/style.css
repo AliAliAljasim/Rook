@@ -618,3 +618,7 @@ body:has(.setup-layer) .topbar { z-index: auto; }
 .chip-failed .chip-verb { color: var(--danger); }
 .chip-static { cursor: default; }
 .chip-static:hover { background: none; border-color: var(--b3); }
+/* test copy (make try): a tag after the wordmark so it is never mistaken for the installed app */
+body[data-trial] .brand .word::after { content: 'test'; margin-left: 8px; padding: 2px 7px; border-radius: 6px; background: var(--accent); color: var(--on-accent); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; vertical-align: middle; }
+.proj-btns { flex: 1 0 100%; display: flex; gap: 8px; }
+.proj-btns .pill-ghost:last-child { margin-left: auto; }

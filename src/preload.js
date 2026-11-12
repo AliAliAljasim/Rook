@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   send: (prompt, sessionId) => ipcRenderer.send('chat:send', { prompt, sessionId }),
   cancel: () => ipcRenderer.send('chat:cancel'),
   onEvent: (cb) => ipcRenderer.on('chat:event', (_, ev) => cb(ev)),
-  getConfig: inv('config:get'), setConfig: inv('config:set'), pickFolder: inv('dialog:pickFolder'),
+  getConfig: inv('config:get'), setConfig: inv('config:set'), pickFolder: inv('dialog:pickFolder'), checkProject: inv('project:check'),
   vaultInfo: inv('vault:info'), createVault: inv('vault:create'),
   setup: { detect: inv('setup:detect'), checkClaude: inv('setup:checkClaude') }, recentNotes: inv('vault:recent'),
   listNotes: inv('vault:list'), graph: inv('vault:graph'), resolveNote: inv('note:resolve'), readNote: inv('note:read'), version: inv('app:version'),

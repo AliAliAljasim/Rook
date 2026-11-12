@@ -11,6 +11,15 @@ const scan = require('./vaultscan');
 const clip = require('./clip');
 const moves = require('./moves');
 
+// ---- test copy (`make try`, scripts/try.sh) ------------------------------------------
+// A throwaway build in the Windows temp folder, marked by a ROOK_TRY file next to the exe. It keeps its settings
+// inside that folder, so the installed Rook is untouched. try.sh starts it from a PowerShell watcher that deletes
+// the folder once it has quit (the app cannot reliably delete itself: its child processes end with it).
+// No tray, startup entry, global shortcuts, scheduled runs or updates, so it never competes with the installed app.
+const TRY_DIR = path.dirname(process.execPath);
+const TRY = app.isPackaged && fs.existsSync(path.join(TRY_DIR, 'ROOK_TRY'));
+if (TRY) app.setPath('userData', path.join(TRY_DIR, 'profile'));
+
 const DEFAULTS = {
   // vault, CLI path and name are machine-specific: blank until the first-run setup fills them in
   vaultWin: '',
@@ -18,6 +27,7 @@ const DEFAULTS = {
   readScope: 'machine', // 'machine' | 'vault'
   name: '',
   launchAtLogin: true, // start with Windows, quietly in the tray
+  webSearch: true,     // the agent may use WebSearch (WebFetch stays denied; see src/policy.js)
   notify: true,        // a Windows notification when a reply finishes while Rook is hidden or behind other apps
   keys: {},            // the user's changed shortcuts, { action: 'Ctrl+N' }; defaults live in the renderer
   theme: 'dark',       // 'dark' | 'light' | 'system'
@@ -55,7 +65,7 @@ const cleanKeys = (k) => Object.fromEntries(Object.entries(k && typeof k === 'ob
   .filter(([a, v]) => KEY_ACTIONS.includes(a) && typeof v === 'string' && /^((Ctrl|Alt|Shift|Win)\+)*[^+\s]{1,12}$/.test(v)));
 // Windows starts Rook at sign-in with --hidden, which keeps the window in the tray until it is asked for.
 function applyLoginItem(cfg) {
-  if (!app.isPackaged) return; // never register the development build
+  if (!app.isPackaged || TRY) return; // never register the development build
   try { app.setLoginItemSettings({ openAtLogin: !!cfg.launchAtLogin, args: ['--hidden'] }); } catch { /* best effort */ }
 }
 const userFile = (n) => path.join(app.getPath('userData'), n);
@@ -75,14 +85,14 @@ function loadCfg() {
 const toWsl = (p) => p.replace(/^([A-Za-z]):[\\/]/, (_, d) => `mnt/${d.toLowerCase()}/`).replace(/\\/g, '/');
 // Any path the user might give (C:\\..., \\\\wsl.localhost\\<distro>\\..., or already /home/...) as WSL sees it.
 const anyToWsl = (p) => {
-  const m = /^\\\\wsl(?:\.localhost|\$)\\[^\\]+(\\.*)?$/i.exec(p);
-  if (m) return (m[1] || '\\').replace(/\\/g, '/');
+  const m = /^[\\/]{2}wsl(?:\.localhost|\$)[\\/][^\\/]+([\\/].*)?$/i.exec(p); // \\wsl.localhost\<distro>\..., either slash
+  if (m) return (m[1] || '/').replace(/\\/g, '/');
   return /^[A-Za-z]:[\\/]/.test(p) ? `/${toWsl(p)}` : p.replace(/\\/g, '/');
 };
 const fromWsl = (p) => p.replace(/^\/mnt\/([a-z])\//, (_, d) => `${d.toUpperCase()}:\\`).replace(/\//g, '\\');
 const vaultName = (cfg) => path.basename(cfg.vaultWin.replace(/[\\/]+$/, ''));
 const needsSetup = (c) => !c.vaultWin || !c.claudePath || !c.name;
-const publicCfg = () => { const c = loadCfg(); return { ...c, needsSetup: needsSetup(c), vaultName: c.vaultWin ? vaultName(c) : '', vaultWsl: c.vaultWin ? `/${toWsl(c.vaultWin)}` : '', summonOk, captureOk, models: MODELS, efforts: EFFORTS }; };
+const publicCfg = () => { const c = loadCfg(); return { ...c, needsSetup: needsSetup(c), trial: TRY, vaultName: c.vaultWin ? vaultName(c) : '', vaultWsl: c.vaultWin ? `/${toWsl(c.vaultWin)}` : '', summonOk, captureOk, models: MODELS, efforts: EFFORTS }; };
 let summonOk = true, captureOk = true;
 
 // ---- vault index (read-only walk) -------------------------------------------------
@@ -243,6 +253,7 @@ function captureSelection() {
   }, 220));
 }
 function registerSummon() {
+  if (TRY) { summonOk = captureOk = false; return; } // the installed Rook keeps its shortcuts
   try {
     globalShortcut.unregisterAll();
     const keys = loadCfg().keys;
@@ -251,6 +262,7 @@ function registerSummon() {
   } catch { summonOk = false; captureOk = false; }
 }
 function createTray() {
+  if (TRY) return; // closing the test copy quits it, which deletes it
   try {
     tray = new Tray(path.join(__dirname, '..', 'build', 'icon.ico'));
     tray.setToolTip('Rook');
@@ -270,6 +282,7 @@ ipcMain.handle('config:set', (_, c) => {
     name: typeof c.name === 'string' && c.name.trim() ? c.name.trim().slice(0, 40) : cur.name,
     launchAtLogin: typeof c.launchAtLogin === 'boolean' ? c.launchAtLogin : cur.launchAtLogin,
     notify: typeof c.notify === 'boolean' ? c.notify : cur.notify,
+    webSearch: typeof c.webSearch === 'boolean' ? c.webSearch : cur.webSearch,
     keys: cleanKeys(c.keys),
     theme: oneOf(c.theme, ['dark', 'light', 'system'], cur.theme),
     textSize: oneOf(c.textSize, ['small', 'regular', 'large'], cur.textSize),
@@ -284,9 +297,40 @@ ipcMain.handle('config:set', (_, c) => {
   walkCache.at = 0;
   return publicCfg();
 });
-ipcMain.handle('dialog:pickFolder', async () => {
-  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
+// opts.wsl: start in the WSL home (\\wsl.localhost\<distro>\home\<user>) so Linux folders can be picked.
+ipcMain.handle('dialog:pickFolder', async (_, opts) => {
+  let defaultPath;
+  if (opts?.wsl) {
+    const w = await wslInfo();
+    if (w.distro && w.home) defaultPath = `\\\\wsl.localhost\\${w.distro}${w.home.replace(/\//g, '\\')}`;
+  }
+  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath });
   return r.canceled ? null : r.filePaths[0];
+});
+
+// ---- WSL folders for Projects ---------------------------------------------------------
+// The default distro's name and the user's home there, asked once.
+let wslCache = null;
+const wslInfo = () => wslCache || (wslCache = new Promise((resolve) => {
+  execFile('wsl.exe', ['-e', 'sh', '-c', 'printf "%s\\n%s" "$WSL_DISTRO_NAME" "$HOME"'], { windowsHide: true, timeout: 20000 }, (err, out) => {
+    const [distro, home] = String(out || '').replace(/\0/g, '').trim().split(/\r?\n/);
+    if (err || !home?.startsWith('/')) wslCache = null; // try again next time
+    resolve({ distro: distro || '', home: home?.startsWith('/') ? home : '' });
+  });
+}));
+// A project folder as the user typed or picked it (C:\..., \\wsl.localhost\..., /home/..., ~/...) -> its WSL path,
+// after checking inside WSL that the folder is there.
+ipcMain.handle('project:check', async (_, raw) => {
+  let p = anyToWsl(String(raw || '').replace(/[\r\n"`]/g, '').trim());
+  if (/^~(\/|$)/.test(p)) {
+    const { home } = await wslInfo();
+    if (!home) return { ok: false, reason: 'Could not reach WSL to work out where ~ is. Use the full path, like /home/you/project.' };
+    p = home + p.slice(1);
+  }
+  p = p.replace(/\/+$/, '') || '/';
+  if (!p.startsWith('/')) return { ok: false, reason: 'Use a full path: /home/you/project, ~/project, C:\\Users\\you\\project or \\\\wsl.localhost\\…' };
+  return new Promise((resolve) => execFile('wsl.exe', ['-e', 'test', '-d', p], { windowsHide: true, timeout: 20000 }, (err) =>
+    resolve(err ? { ok: false, reason: `No folder at ${p} in WSL.` } : { ok: true, path: p })));
 });
 
 ipcMain.handle('vault:info', (_, dir) => {
@@ -593,18 +637,28 @@ ipcMain.on('win:mini', (_, mode) => {
 
 // ---- chat: Claude Code CLI inside WSL ----------------------------------------------
 ipcMain.on('chat:cancel', () => { if (child) { child.cancelled = true; child.kill(); } });
+// The user's local date and time, for the agent's instructions. Built at each run, so a resumed chat gets the time
+// it is now, not when the chat began. e.g. "Thursday 12 November 2026, 14:05 (Europe/London, UTC+00:00)".
+function nowForAgent(d = new Date()) {
+  const day = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).replace(',', '');
+  const off = -d.getTimezoneOffset(), sign = off < 0 ? '-' : '+', a = Math.abs(off);
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time';
+  return `${day}, ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} (${zone}, UTC${sign}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')})`;
+}
 // The command line for one agent run, shared by chats and scheduled tasks.
 function agentArgs(cfg, outputFlags) {
   const vaultWsl = toWsl(cfg.vaultWin);
   // Policy lives outside the vault so the agent cannot modify it.
   const policyFile = userFile('policy.json');
-  fs.writeFileSync(policyFile, JSON.stringify(buildPolicy(vaultWsl, cfg.readScope), null, 2));
+  fs.writeFileSync(policyFile, JSON.stringify(buildPolicy(vaultWsl, cfg.readScope, { webSearch: cfg.webSearch !== false }), null, 2));
   const args = ['--cd', `/${vaultWsl}`, '-e', cfg.claudePath, '-p', ...outputFlags,
     '--settings', `/${toWsl(policyFile)}`,
     '--append-system-prompt', SYSTEM_PROMPT(`/${vaultWsl}`, cfg.readScope, {
       home: (/^\/home\/[^/]+/.exec(cfg.claudePath) || [])[0],
       winHome: (/^\/mnt\/[a-z]\/Users\/[^/]+/i.exec(`/${vaultWsl}`) || [])[0],
-      projects: cfg.projects
+      projects: cfg.projects,
+      webSearch: cfg.webSearch !== false,
+      now: nowForAgent()
     })];
   // Reading the whole machine: the CLI only lists and searches inside its working directories, so add the
   // filesystem root as one. This does not grant writes: with no allow rule for them, edits and any shell
@@ -816,7 +870,7 @@ const ghToken = () => new Promise((resolve) => {
     (err, out) => resolve(err ? null : (String(out).trim().split(/\s+/).pop() || null)));
 });
 async function checkUpdates() {
-  if (!app.isPackaged) return setUpd({ state: 'dev' });
+  if (!app.isPackaged || TRY) return setUpd({ state: 'dev' });
   if (['checking', 'available', 'downloading', 'ready'].includes(upd.state)) return;
   setUpd({ state: 'checking', error: null });
   try {
@@ -850,7 +904,7 @@ ipcMain.on('update:install', () => { if (upd.state === 'ready' && updater) { sav
 // Starting Rook again while it is in the tray brings the running one forward instead of opening a second.
 // Windows groups taskbar buttons by this id. The installer's shortcuts (and anything pinned from them) carry
 // the appId from package.json, so the running app must declare the same one or it shows up as a second icon.
-app.setAppUserModelId('com.alialialjasim.rook');
+app.setAppUserModelId(TRY ? 'com.alialialjasim.rook.try' : 'com.alialialjasim.rook');
 const primary = app.requestSingleInstanceLock();
 if (!primary) app.quit();
 app.on('second-instance', showWindow);
@@ -864,7 +918,7 @@ app.whenReady().then(() => {
   applyLoginItem(loadCfg());
   registerSummon();
   pruneBackups();
-  scheduler = schedule.start({
+  if (!TRY) scheduler = schedule.start({
     loadCfg, userFile, readJson, resolveInside,
     // One headless agent run; resolves with what it wrote back.
     runAgent: (prompt) => new Promise((resolve) => {
