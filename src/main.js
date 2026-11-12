@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, screen, Tray, Menu, Notification, globalShortcut, nativeTheme, net } = require('electron');
 const { spawn, execFile } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { buildPolicy, SYSTEM_PROMPT } = require('./policy');
 const { resolveInside } = require('./guard');
@@ -10,10 +11,11 @@ const scan = require('./vaultscan');
 const clip = require('./clip');
 
 const DEFAULTS = {
-  vaultWin: 'C:\\Users\\alijas\\Documents\\Vault',
-  claudePath: '/home/alijas/.local/bin/claude',
+  // vault, CLI path and name are machine-specific: blank until the first-run setup fills them in
+  vaultWin: '',
+  claudePath: '',
   readScope: 'machine', // 'machine' | 'vault'
-  name: 'Ali',
+  name: '',
   launchAtLogin: true, // start with Windows, quietly in the tray
   notify: true,        // a Windows notification when a reply finishes while Rook is hidden or behind other apps
   keys: {},            // the user's changed shortcuts, { action: 'Ctrl+N' }; defaults live in the renderer
@@ -58,7 +60,17 @@ function applyLoginItem(cfg) {
 const userFile = (n) => path.join(app.getPath('userData'), n);
 const readJson = (f, fallback) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return fallback; } };
 
-const loadCfg = () => ({ ...DEFAULTS, ...readJson(userFile('config.json'), {}) });
+// Builds before 0.6.1 shipped one developer's paths as defaults, and saving any setting wrote them to config.json.
+// On a PC where that vault is not there, drop them (and the name that came with them) so the setup runs.
+const OLD_DEFAULTS = { vaultWin: 'C:\\Users\\alijas\\Documents\\Vault', claudePath: '/home/alijas/.local/bin/claude', name: 'Ali' };
+function loadCfg() {
+  const c = { ...DEFAULTS, ...readJson(userFile('config.json'), {}) };
+  if (c.vaultWin === OLD_DEFAULTS.vaultWin && c.claudePath === OLD_DEFAULTS.claudePath && !fs.existsSync(c.vaultWin)) {
+    c.vaultWin = ''; c.claudePath = '';
+    if (c.name === OLD_DEFAULTS.name) c.name = '';
+  }
+  return c;
+}
 const toWsl = (p) => p.replace(/^([A-Za-z]):[\\/]/, (_, d) => `mnt/${d.toLowerCase()}/`).replace(/\\/g, '/');
 // Any path the user might give (C:\\..., \\\\wsl.localhost\\<distro>\\..., or already /home/...) as WSL sees it.
 const anyToWsl = (p) => {
@@ -68,12 +80,14 @@ const anyToWsl = (p) => {
 };
 const fromWsl = (p) => p.replace(/^\/mnt\/([a-z])\//, (_, d) => `${d.toUpperCase()}:\\`).replace(/\//g, '\\');
 const vaultName = (cfg) => path.basename(cfg.vaultWin.replace(/[\\/]+$/, ''));
-const publicCfg = () => { const c = loadCfg(); return { ...c, vaultName: vaultName(c), vaultWsl: `/${toWsl(c.vaultWin)}`, summonOk, captureOk, models: MODELS, efforts: EFFORTS }; };
+const needsSetup = (c) => !c.vaultWin || !c.claudePath || !c.name;
+const publicCfg = () => { const c = loadCfg(); return { ...c, needsSetup: needsSetup(c), vaultName: c.vaultWin ? vaultName(c) : '', vaultWsl: c.vaultWin ? `/${toWsl(c.vaultWin)}` : '', summonOk, captureOk, models: MODELS, efforts: EFFORTS }; };
 let summonOk = true, captureOk = true;
 
 // ---- vault index (read-only walk) -------------------------------------------------
 let walkCache = { at: 0, root: '', files: [] };
 function walkVault(root) {
+  if (!root) return []; // no vault chosen yet: never walk the current directory
   if (walkCache.root === root && Date.now() - walkCache.at < 4000) return walkCache.files;
   const files = [];
   const stack = [''];
@@ -286,6 +300,43 @@ ipcMain.handle('vault:info', (_, dir) => {
     return { ok: true, notes: files.length, folders: folders.size };
   } catch { return { ok: false, reason: 'That folder could not be found.' }; }
 });
+// ---- first-run setup: suggest this PC's own values ----------------------------------
+// Where the Claude CLI lives inside WSL. A login shell so ~/.local/bin and the like are on PATH.
+const findClaude = () => new Promise((resolve) => {
+  const script = 'command -v claude || for p in "$HOME/.local/bin/claude" "$HOME/.claude/local/claude"; do [ -x "$p" ] && echo "$p" && break; done';
+  execFile('wsl.exe', ['-e', 'bash', '-lc', script], { windowsHide: true, timeout: 20000 }, (err, out) => {
+    const p = String(out || '').replace(/\0/g, '').trim().split(/\r?\n/).pop() || '';
+    resolve({ wsl: !(err && err.code === 'ENOENT'), path: p.startsWith('/') ? p : '' });
+  });
+});
+// Vaults Obsidian already knows about (its own list), then the usual spot in Documents.
+function findVaults() {
+  const out = [];
+  const known = readJson(path.join(app.getPath('appData'), 'obsidian', 'obsidian.json'), {}).vaults || {};
+  for (const v of Object.values(known)) if (v && typeof v.path === 'string' && /^[A-Za-z]:\\/.test(v.path) && fs.existsSync(v.path)) out.push(v.path);
+  const docs = path.join(app.getPath('documents'), 'Vault');
+  if (!out.length) out.push(docs);
+  return [...new Set(out)];
+}
+ipcMain.handle('setup:detect', async () => {
+  const claude = await findClaude();
+  let user = '';
+  try { user = os.userInfo().username || ''; } catch { /* unknown */ }
+  return { name: user ? user[0].toUpperCase() + user.slice(1) : '', vaults: findVaults(), claudePath: claude.path, wsl: claude.wsl };
+});
+// A new vault: the folder and an empty .obsidian, so Obsidian opens it as a vault.
+ipcMain.handle('vault:create', (_, dir) => {
+  if (typeof dir !== 'string' || !/^[A-Za-z]:\\/.test(dir.trim())) return { ok: false, reason: 'Use a full Windows path, like C:\\Users\\you\\Documents\\Vault.' };
+  try { fs.mkdirSync(path.join(dir.trim(), '.obsidian'), { recursive: true }); return { ok: true }; }
+  catch (e) { return { ok: false, reason: `Could not create the folder: ${e.message}` }; }
+});
+// Is the CLI path real? Runs `claude --version` inside WSL.
+ipcMain.handle('setup:checkClaude', (_, p) => new Promise((resolve) => {
+  if (typeof p !== 'string' || !p.trim().startsWith('/')) return resolve({ ok: false, reason: 'Use the path as WSL sees it, like /home/you/.local/bin/claude.' });
+  execFile('wsl.exe', ['-e', p.trim(), '--version'], { windowsHide: true, timeout: 30000 }, (err, out) => {
+    resolve(err ? { ok: false, reason: 'Claude did not start from that path. In WSL, run "command -v claude" to find it.' } : { ok: true, version: String(out).trim() });
+  });
+}));
 ipcMain.handle('vault:recent', () => {
   const root = loadCfg().vaultWin;
   return walkVault(root).slice().sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, 4).map(noteView);
@@ -563,6 +614,13 @@ function agentArgs(cfg, outputFlags) {
   return args;
 }
 
+// Why an agent run cannot start, in words the user can act on; null when it can.
+function agentProblem(cfg) {
+  if (needsSetup(cfg)) return 'Rook is not set up yet. Open Settings and choose your vault and the Claude CLI path.';
+  if (!fs.existsSync(cfg.vaultWin)) return `The vault folder ${cfg.vaultWin} does not exist. Choose another folder in Settings, or create it.`;
+  return null;
+}
+
 // ---- change history: what a note looked like before the agent touched it ------------
 const backupFile = (id) => path.join(userFile('backups'), `${String(id).replace(/[^\w-]/g, '')}.bak`);
 function keepBefore(cfg, toolUse) {
@@ -614,6 +672,8 @@ function tellReplyDone(code, reply) {
 ipcMain.on('chat:send', (e, { prompt, sessionId }) => {
   const cfg = loadCfg();
   const emit = (ev) => { if (!sender(e).isDestroyed()) sender(e).send('chat:event', ev); };
+  const unready = agentProblem(cfg);
+  if (unready) return emit({ type: 'done', code: -1, stderr: unready });
   const args = agentArgs(cfg, ['--output-format', 'stream-json', '--verbose', '--include-partial-messages']);
   if (sessionId) args.push('--resume', sessionId);
 
@@ -728,6 +788,8 @@ app.whenReady().then(() => {
     loadCfg, userFile, readJson, resolveInside,
     // One headless agent run; resolves with what it wrote back.
     runAgent: (prompt) => new Promise((resolve) => {
+      const unready = agentProblem(loadCfg());
+      if (unready) return resolve({ ok: false, text: unready });
       const c = spawn('wsl.exe', agentArgs(loadCfg(), ['--output-format', 'json']), { windowsHide: true });
       let out = '';
       const timer = setTimeout(() => c.kill(), 20 * 60e3);

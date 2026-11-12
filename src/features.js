@@ -351,3 +351,71 @@ function overlayKey(e) {
   if (closePop()) { focusAsk(); return true; }
   return false;
 }
+
+// ---------- first-run setup ----------
+// Shown until the vault, the Claude CLI path and a name are saved. Not dismissable: nothing works without them.
+async function openSetup() {
+  const layer = h('div', { cls: 'setup-layer', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Set up Rook' });
+  document.body.append(layer);
+  layer.append(h('div', { cls: 'setup-card' }, h('h2', { text: 'Setting up Rook' }), h('p', { cls: 'sp-help', text: 'Looking at this PC for your vault and the Claude CLI…' })));
+  const found = await VA.setup.detect().catch(() => ({ name: '', vaults: [], claudePath: '', wsl: true }));
+
+  const name = h('input', { cls: 'sp-input', value: S.cfg.name || found.name || '', 'aria-label': 'Your name', placeholder: 'What should Rook call you?' });
+  const vault = h('input', { cls: 'sp-input mono', value: S.cfg.vaultWin || found.vaults[0] || '', 'aria-label': 'Vault folder', spellcheck: 'false' });
+  const vaultHelp = h('p', { cls: 'sp-help' }), vaultAct = h('div', { cls: 'sp-row' });
+  const claude = h('input', { cls: 'sp-input mono', value: S.cfg.claudePath || found.claudePath || '', 'aria-label': 'Claude CLI path', spellcheck: 'false', placeholder: '/home/you/.local/bin/claude' });
+  const claudeHelp = h('p', { cls: 'sp-help' });
+  const done = h('button', { type: 'button', cls: 'pill pill-accent', text: 'Start using Rook' });
+  let vaultOk = false, claudeOk = false;
+  const ready = () => { done.disabled = !(vaultOk && claudeOk && name.value.trim()); };
+  const say = (el, ok, text) => { el.className = 'sp-help' + (ok ? '' : ' warn'); el.textContent = text; };
+
+  const checkVault = async () => {
+    const dir = vault.value.trim();
+    vaultAct.replaceChildren();
+    const r = dir ? await VA.vaultInfo(dir) : { ok: false, reason: 'Choose the folder of your Obsidian vault.' };
+    vaultOk = r.ok;
+    if (r.ok) say(vaultHelp, true, `Obsidian vault found · ${num(r.notes)} notes in ${num(r.folders)} folders.`);
+    else if (dir) {
+      say(vaultHelp, false, `${r.reason} Pick another folder, or make a new vault here.`);
+      vaultAct.append(pill('pill-ghost', 'Create a new vault here', async () => {
+        const c = await VA.createVault(dir);
+        if (!c.ok) return say(vaultHelp, false, c.reason);
+        checkVault();
+      }));
+    } else say(vaultHelp, false, r.reason);
+    ready();
+  };
+  const checkClaude = async () => {
+    claudeOk = false; ready();
+    if (!found.wsl) return say(claudeHelp, false, 'WSL was not found. Rook runs Claude Code inside WSL: install WSL, then Claude Code in it.');
+    if (!claude.value.trim()) return say(claudeHelp, false, 'Claude Code was not found in WSL. Install it there (see claude.com/claude-code), then type its path here.');
+    say(claudeHelp, true, 'Checking…');
+    const r = await VA.setup.checkClaude(claude.value);
+    claudeOk = r.ok;
+    say(claudeHelp, r.ok, r.ok ? `Claude Code found · ${r.version}` : r.reason);
+    ready();
+  };
+  vault.addEventListener('change', checkVault);
+  claude.addEventListener('change', checkClaude);
+  name.addEventListener('input', ready);
+  done.addEventListener('click', async () => {
+    if (done.disabled) return;
+    S.cfg = await VA.setConfig({ ...S.cfg, name: name.value, vaultWin: vault.value.trim(), claudePath: claude.value.trim() });
+    layer.remove();
+    S.note = null; S.graphStale = true; S.treeOpen.clear();
+    await loadNotes(); paint(); focusAsk();
+  });
+
+  const field = (label, ...kids) => h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label', text: label }), ...kids);
+  layer.replaceChildren(h('div', { cls: 'setup-card' },
+    h('h2', { text: 'Welcome to Rook' }),
+    h('p', { cls: 'setup-intro', text: 'Three things and you are ready. All of them can be changed later in Settings.' }),
+    field('Your name', name),
+    field('Obsidian vault', h('div', { cls: 'sp-row' }, vault, pill('pill-ghost', 'Browse', async () => { const p = await VA.pickFolder(); if (p) { vault.value = p; checkVault(); } })), vaultHelp, vaultAct),
+    field('Claude CLI path in WSL', claude, claudeHelp),
+    h('div', { cls: 'setup-foot' }, done)));
+  ready();
+  checkVault(); checkClaude();
+  name.focus();
+}

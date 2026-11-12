@@ -1,14 +1,14 @@
 {
   "name": "rook",
   "productName": "Rook",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Note-taking agent: Claude Code (WSL) with write access only to the Obsidian vault",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "dist:win": "electron-builder --win --x64",
     "release:win": "bash scripts/release.sh",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.js"
   },
   "devDependencies": {
     "electron": "^45.3.0",

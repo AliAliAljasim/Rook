@@ -952,6 +952,7 @@ function wire() {
       if (combo) recording.take(combo);
       return;
     }
+    if (document.querySelector('.setup-layer')) return; // setup first: no shortcuts behind it
     if (overlayKey(e)) { e.preventDefault(); e.stopPropagation(); return; }
     const combo = comboOf(e);
     const hit = combo && SHORTCUTS.find(([a]) => keyOf(a) === combo);
@@ -992,7 +993,7 @@ function wire() {
   setTimeout(() => {
     const sp = $('splash'); sp.classList.add('done');
     setTimeout(() => sp.remove(), 1000);
-    focusAsk();
+    if (S.cfg.needsSetup) openSetup(); else focusAsk();
   }, Math.max(0, 1900 - (Date.now() - started)));
   setInterval(() => { if (!S.streaming) loadNotes(); }, 30000);
 })();

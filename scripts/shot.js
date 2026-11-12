@@ -83,7 +83,9 @@ for (const [c, f] of Object.entries({ 'config:get': () => cfg, 'config:set': (_,
   'change:revert': () => true, 'attach:discard': () => true,
   'tasks:list': () => tasks, 'tasks:set': (_, t) => ({ ok: true, line: t.line }), 'vault:health': () => healthData, 'health:trash': () => true, 'health:create': (_, { target }) => `Projects/Atlas/${target}.md`,
   'clip:fetch': (_, url) => ({ ok: true, url, title: 'How book printing works', text: 'Offset printing uses plates. '.repeat(20), truncated: false }), 'schedule:runPrompt': () => ({ ok: true, text: 'Done.' }), 'note:undoCreate': () => true,
-  'voice:status': () => ({ installed: false, installing: false, percent: 0, sizeMb: 157 }), 'voice:install': () => ({ ok: true }), 'voice:remove': () => true, 'voice:transcribe': () => 'hello from the microphone' }))
+  'voice:status': () => ({ installed: false, installing: false, percent: 0, sizeMb: 157 }), 'voice:install': () => ({ ok: true }), 'voice:remove': () => true, 'voice:transcribe': () => 'hello from the microphone',
+  'setup:detect': () => ({ name: 'Sam', vaults: ['C:\\Users\\sam\\Documents\\Vault'], claudePath: '/home/sam/.local/bin/claude', wsl: true }),
+  'setup:checkClaude': () => ({ ok: true, version: '2.1.0 (Claude Code)' }), 'vault:create': () => ({ ok: true }) }))
   ipcMain.handle(c, f);
 ipcMain.on('config:initial', (e) => { e.returnValue = { theme: THEME, textSize: 'regular' }; });
 ipcMain.on('chat:send', (_, { prompt }) => { lastPrompt = prompt; });
@@ -106,6 +108,11 @@ app.whenReady().then(async () => {
   const snap = (n) => shot(P + n);
   await wait(100); await snap('0a-splash');
   await wait(2200); await snap('1-home');
+  // first-run setup (shown when config.json has no vault, CLI path or name)
+  await js(`openSetup()`); await wait(400); await snap('0b-setup');
+  await check('setup ready', `!document.querySelector('.setup-card .pill-accent').disabled`);
+  await js(`document.querySelector('.setup-card .pill-accent').click()`); await wait(300);
+  await check('setup closed', `!document.querySelector('.setup-layer')`);
   await js(`[...document.querySelectorAll('#view-home .row')].find(b=>b.textContent.includes('Atlas: what')).click()`); await wait(300);
   await js(`document.getElementById('scroller').scrollTop = 0`); await snap('2-chat');
   await js(`document.getElementById('scroller').scrollTop = 99999`); await snap('3-chat-bottom');

@@ -22,6 +22,7 @@ function realpathOfExistingPart(p) {
 
 function resolveInside(root, target, opts = {}) {
   const ci = opts.caseInsensitive ?? process.platform === 'win32';
+  if (typeof root !== 'string' || !root) throw new Error('blocked: no vault chosen');
   if (typeof target !== 'string' || !target || target.includes('\0')) throw new Error('blocked: invalid path');
   const rootReal = fs.realpathSync.native(root);
   const abs = path.resolve(rootReal, target);           // absolute targets stay absolute
