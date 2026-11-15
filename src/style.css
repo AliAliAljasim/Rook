@@ -96,10 +96,10 @@ input, textarea { font: inherit; color: inherit; }
 .splash.done { transform: perspective(1800px) rotateY(-102deg); }
 .splash.done::after { opacity: 1; }
 @media (max-height: 200px) { .splash { display: none; } }
-@media (prefers-reduced-motion: reduce) {
-  .sb-cover { stroke-dashoffset: 0; fill-opacity: 1; } .sb-ribbon { transform: none; } .sb-line { stroke-dashoffset: 0; animation: none; }
-  .splash-word span { opacity: 1; transform: none; } .splash.done { transform: none; opacity: 0; }
-}
+/* Reduced motion is the app's Animations setting (theme.js / applyTheme), not the bare media query: see motion in main.js. */
+html[data-motion="reduce"] .sb-cover { stroke-dashoffset: 0; fill-opacity: 1; } html[data-motion="reduce"] .sb-ribbon { transform: none; }
+html[data-motion="reduce"] .sb-line { stroke-dashoffset: 0; animation: none; }
+html[data-motion="reduce"] .splash-word span { opacity: 1; transform: none; } html[data-motion="reduce"] .splash.done { transform: none; opacity: 0; }
 
 /* ---------- shell ---------- */
 .app { position: relative; height: 100vh; background: var(--bg); color: var(--fg); display: flex; flex-direction: column; overflow: hidden; }
@@ -202,6 +202,10 @@ button.upd-pill .spinner { width: 12px; height: 12px; }
 .mini-vinyl span { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); transform: translateX(1.5px); }
 .caret { display: inline-block; width: 2px; height: 1.05em; background: var(--accent); vertical-align: -2px; margin-left: 2px; border-radius: 1px; animation: blink 1.1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
+/* The status word glows across while Rook works, so a long wait still reads as alive. */
+.status-word { background: linear-gradient(90deg, var(--accent) 0%, var(--accent) 35%, var(--fg) 50%, var(--accent) 65%, var(--accent) 100%); background-size: 300% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: status-glow 1.8s linear infinite; }
+@keyframes status-glow { from { background-position: 100% 0; } to { background-position: 0 0; } }
 .tool { margin: 0 0 6px; border-radius: 8px; }
 .tool + .md, .chips + .md { margin-top: 14px; }
 .tool > summary { list-style: none; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 16px; gap: 10px; align-items: center; min-height: 36px; padding: 0 10px; border-radius: 8px; cursor: pointer; color: var(--muted); font-size: 13px; }
@@ -462,6 +466,8 @@ body[data-mini="panel"] .ask-hint { padding: 0 12px 8px; font-size: 11px; }
 .chip-wrap .chip:first-child:not(:last-child) { border-radius: 17px 0 0 17px; border-right: 0; padding-right: 10px; }
 .chip-act { gap: 6px; padding: 0 12px 0 10px; border-radius: 0 17px 17px 0; color: var(--muted); font-size: 12px; flex: none; }
 .chip-act:hover { color: var(--fg-2); }
+.chip-map { gap: 6px; padding: 0 14px 0 12px; color: var(--muted); font-size: 12px; flex: none; }
+.chip-map:hover { color: var(--fg-2); border-color: var(--b4); }
 .chip-wrap.reverted .chip-verb { color: var(--muted-2); }
 .chip-wrap.reverted .chip-path { text-decoration: line-through; color: var(--muted-2); }
 
@@ -495,7 +501,7 @@ body[data-mini="panel"] .ask-hint { padding: 0 12px 8px; font-size: 11px; }
 
 /* ---------- ask box: attachments, dictation, the /agent popup ---------- */
 .ask-files { display: flex; flex-wrap: wrap; gap: 6px; }
-.ask-files:empty { display: none; }
+.ask-files:empty, #ask-ctx-slot:empty { display: none; } /* an empty slot would still take a flex gap and push the line off centre */
 .ask-files .ask-ctx { margin-top: 4px; }
 .ask-line .tool-btn { width: 34px; height: 34px; }
 #attach-slot { margin-left: -10px; }
@@ -551,9 +557,7 @@ body[data-mini="panel"] .row-acts { display: none; } /* pin, rename and delete s
 body[data-mini="panel"] .row-wrap:hover .row-acts, body[data-mini="panel"] .row-wrap:focus-within .row-acts { display: flex; }
 body[data-mini="panel"] .modal-layer { padding: 56px 8px 8px; }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 0ms !important; }
-}
+html[data-motion="reduce"] *, html[data-motion="reduce"] *::before, html[data-motion="reduce"] *::after { animation-duration: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 0ms !important; }
 
 .sp-field > .sp-input { flex: none; }
 
@@ -622,3 +626,64 @@ body:has(.setup-layer) .topbar { z-index: auto; }
 body[data-trial] .brand .word::after { content: 'test'; margin-left: 8px; padding: 2px 7px; border-radius: 6px; background: var(--accent); color: var(--on-accent); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; vertical-align: middle; }
 .proj-btns { flex: 1 0 100%; display: flex; gap: 8px; }
 .proj-btns .pill-ghost:last-child { margin-left: auto; }
+
+/* ---------- Notes page: the map, with the open note docked beside it ---------- */
+.view-notes.active.with-side { grid-template-columns: 220px minmax(0, 1fr) clamp(330px, 37%, 560px); }
+.view-notes .map-pane { order: 2; }
+.reader.side { order: 3; border-left: 1px solid var(--line); background: var(--bg); }
+.reader.side .reader-inner { padding: 14px 26px 48px; }
+.reader.side .note-head h1 { font-size: 34px; }
+.reader-bar { display: flex; justify-content: flex-end; gap: 2px; margin: 0 -10px 6px 0; }
+.reader-bar .tool-btn { width: 32px; height: 32px; }
+.reader:not(.side) .reader-bar { margin-bottom: -18px; }
+.note-hidden { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -12px 0 24px; padding: 6px 6px 6px 12px; border-radius: 8px; background: rgba(var(--ov),.05); font-size: 13px; color: var(--muted); }
+
+.tree-row { position: relative; }
+.tree-row.is-hidden > .tree-item { opacity: .5; }
+.tree-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(var(--accent-rgb),.2); }
+
+.map-top .map-show { height: 36px; padding: 0 14px; border-radius: 18px; background: var(--float); border: 1px solid var(--b1); font-size: 13px; }
+.map-menu-slot { position: absolute; left: 24px; top: 66px; z-index: 3; }
+.map-menu { width: 300px; padding: 8px; border-radius: 14px; background: var(--float); border: 1px solid var(--b2); box-shadow: 0 18px 44px rgba(0,0,0,.45); display: flex; flex-direction: column; gap: 2px; }
+.map-opt { display: flex; gap: 10px; align-items: flex-start; padding: 8px; border-radius: 8px; cursor: pointer; }
+.map-opt:hover { background: rgba(var(--ov),.06); }
+.map-opt input { margin-top: 2px; accent-color: var(--accent); }
+.map-opt span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.map-opt b { font-size: 13px; font-weight: 600; }
+.map-opt small { font-size: 12px; color: var(--muted-2); }
+.map-hidden { border-top: 1px solid var(--line); margin-top: 4px; padding: 8px 8px 2px; display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; }
+.map-hidden-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.map-hidden-row .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.map-hidden-row .pill-ghost { height: 26px; padding: 0 10px; font-size: 12px; }
+.map-legend { position: absolute; left: 24px; bottom: 20px; display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 16px; background: var(--float); border: 1px solid var(--b1); font-size: 12px; color: var(--muted); }
+.map-legend:hover { color: var(--fg); }
+.map-legend .ring { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent); animation: legend-pulse 1.6s ease-in-out infinite; }
+@keyframes legend-pulse { 50% { box-shadow: 0 0 0 4px rgba(var(--accent-rgb),.2); } }
+.with-side .map-count { display: none; }
+.with-side .map-top { left: 16px; right: 16px; gap: 8px; }
+.with-side .map-top .filter { width: auto; flex: 1; min-width: 0; max-width: 240px; }
+.with-side .map-menu-slot { left: 16px; }
+.with-side .map-legend { left: 16px; }
+.map-pane:has(.map-legend) .map-card { bottom: 64px; }
+
+.note-hidden .pill-ghost { height: 28px; padding: 0 12px; font-size: 12px; flex: none; }
+/* Right-click menu (notes list and map): the only way to hide a note. */
+.ctx-menu { position: fixed; z-index: 60; min-width: 190px; padding: 5px; border-radius: 10px; background: var(--panel); border: 1px solid var(--b2); box-shadow: 0 14px 36px rgba(0,0,0,.45); display: flex; flex-direction: column; }
+.ctx-menu button { text-align: left; height: 30px; padding: 0 10px; border-radius: 6px; font-size: 13px; color: var(--fg); }
+.ctx-menu button:hover, .ctx-menu button:focus-visible { background: rgba(var(--ov),.08); outline: none; }
+.ctx-menu button.danger { color: var(--accent); }
+.ctx-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
+.hide-modal { width: min(420px, 100%); }
+.hide-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.hide-body h2 { margin: 0; padding: 0 6px; font-size: 18px; }
+
+/* Home actions from the vault's CLAUDE.md: more of them, so smaller cards with the description clipped to two lines. */
+.quick-grid.flows { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.quick-grid.flows .quick { padding: 14px 16px; gap: 8px; }
+.quick-grid.flows .quick-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.flow-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.flow-chip { height: 26px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 13px; background: rgba(var(--accent-rgb),.12); color: var(--accent); font-size: 12px; }
+.starter-list { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; padding: 0 6px; }
+.starter-list > div { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+.starter-opt { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin-right: 8px; }
+.starter-opt input { accent-color: var(--accent); }

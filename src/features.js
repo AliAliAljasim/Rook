@@ -341,6 +341,8 @@ function applyTheme() {
   const changed = document.documentElement.dataset.theme !== next;
   document.documentElement.dataset.theme = next;
   VA.setTextSize(S.cfg.textSize);
+  const m = S.cfg.motion || 'on';
+  document.documentElement.dataset.motion = m === 'off' || (m === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches) ? 'reduce' : 'full';
   if (changed && S.view === 'notes' && S.pane === 'map') { S.graphStale = true; paintPane(); } // the map is drawn on a canvas: redraw it in the new colours
 }
 
@@ -378,8 +380,11 @@ async function openSetup() {
     if (r.ok) say(vaultHelp, true, `Obsidian vault found · ${num(r.notes)} notes in ${num(r.folders)} folders.`);
     else if (dir) {
       say(vaultHelp, false, `${r.reason} Pick another folder, or make a new vault here.`);
+      // A new vault starts with Rook's layout (folders, templates, CLAUDE.md) unless the user wants an empty one.
+      const withStarter = h('input', { type: 'checkbox', checked: true, 'aria-label': 'Start with folders, templates and a CLAUDE.md' });
+      vaultAct.append(h('label', { cls: 'starter-opt' }, withStarter, h('span', { text: 'Start with folders, templates and a CLAUDE.md' })));
       vaultAct.append(pill('pill-ghost', 'Create a new vault here', async () => {
-        const c = await VA.createVault(dir);
+        const c = await VA.createVault(dir, { starter: withStarter.checked });
         if (!c.ok) return say(vaultHelp, false, c.reason);
         checkVault();
       }));
@@ -451,5 +456,6 @@ function movesEl(b) {
       h('span', { cls: 'chip-verb', text: 'Deleted' }), h('span', { cls: 'chip-path', text: d.path }), h('span', { cls: 'chip-diff', text: 'in Recycle Bin' })))),
     b.failed.map((m) => h('span', { cls: 'chip-wrap' }, h('span', { cls: 'chip chip-failed', title: m.del ? `delete ${m.from}` : `${m.from} → ${m.to}` },
       h('span', { cls: 'chip-verb', text: m.del ? 'Not deleted' : 'Not moved' }), h('span', { cls: 'chip-path', text: m.from }), h('span', { cls: 'chip-diff', text: m.error })))),
+    b.done.length && !b.undone ? h('button', { type: 'button', cls: 'chip chip-map', title: 'See the moved notes on the map, ringed', onClick: () => showChangesOnMap(b.done.map((m) => m.to)) }, icon('graph', 'sm'), 'Show on map') : null,
     b.done.length && !b.undone ? pill('pill-ghost', `Undo ${b.done.length === 1 ? 'move' : 'moves'}${n ? ` (links fixed in ${n} note${n === 1 ? '' : 's'})` : ''}`, undo, 'undo') : null);
 }

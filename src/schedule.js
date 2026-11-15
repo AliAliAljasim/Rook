@@ -1,5 +1,5 @@
 // Scheduled notes. Runs in the main process while Rook is open or sitting in the tray.
-//   - Daily note: created (from Templates/daily.md when there is one) on the weekdays the user picked.
+//   - Daily note: created where the vault keeps them (from its daily template when there is one) on the weekdays the user picked.
 //   - Weekly review: written by the agent once a week, on the chosen day and hour; if the PC was off
 //     at that moment it is written the next time Rook is running that week.
 //   - The user's own prompts: each runs once on its days, at its hour or as soon as Rook is running
@@ -36,6 +36,7 @@ function weeklyPrompt(now) {
     'This is a scheduled task. Nobody is at the keyboard, so do not ask questions and do not offer choices: decide and write.',
     `Write the weekly review for ISO week ${w.key} (${ymd(w.monday)} to ${ymd(w.sunday)}).`,
     `Find the notes created or changed this week (for example: find . -name '*.md' -newermt '${ymd(w.monday)}' -not -path './.*'), including any daily notes, and read the ones that matter.`,
+    'If the user\'s instructions (the vault\'s CLAUDE.md) describe a weekly review, follow them: where it goes, its template and what it covers come before anything below.',
     `Put the review in Reviews/${w.key}.md, unless the vault already keeps weekly reviews somewhere else; then follow that place and its naming and layout. If this week's review already exists, update it rather than making a second one.`,
     'Cover: what got done, decisions made, what is still open, and what to pick up next week. Keep it tight and link the source notes with [[wiki-links]].',
     'If nothing changed this week, write a two-line review saying so.',
@@ -59,16 +60,60 @@ function customPrompt(task, now) {
   ].join('\n');
 }
 
-// Makes sure today's daily note exists (from Templates/daily.md when there is one). Returns { rel, abs, created }.
-function ensureDaily(cfg, now, resolveInside) {
-  const rel = `Daily/${ymd(now)}.md`;
+// ---- where daily notes live ----------------------------------------------------------
+// A pattern like "01 Daily/{YYYY}/{MM}/{YYYY}-{MM}-{DD}.md". Users set it in Settings; when they have not, it is
+// read off the daily notes already in the vault, so Rook files new ones where the user (and their CLAUDE.md) expect.
+const DEFAULT_DAILY = 'Daily/{YYYY}-{MM}-{DD}.md';
+function dailyRel(pattern, d) {
+  return String(pattern || DEFAULT_DAILY).replace(/\{YYYY\}/g, String(d.getFullYear())).replace(/\{MM\}/g, pad(d.getMonth() + 1)).replace(/\{DD\}/g, pad(d.getDate()));
+}
+// rels: every note's vault path. The most common shape among notes named for a date wins; ties go to the newest.
+function detectDaily(rels) {
+  const seen = new Map();
+  for (const rel of rels) {
+    const m = /(?:^|\/)((\d{4})-(\d{2})-(\d{2}))\.md$/i.exec(rel);
+    if (!m) continue;
+    const [, , y, mo] = m, dir = rel.slice(0, rel.length - m[1].length - 3);
+    // Folders named for the note's year (and a month folder right after it) become {YYYY} and {MM}.
+    const segs = dir ? dir.slice(0, -1).split('/') : [];
+    const shape = segs.map((seg, i) => (seg === y ? '{YYYY}' : seg === mo && segs[i - 1] === y ? '{MM}' : seg)).map((x) => x + '/').join('') + '{YYYY}-{MM}-{DD}.md';
+    const cur = seen.get(shape) || { n: 0, last: '' };
+    seen.set(shape, { n: cur.n + 1, last: m[1] > cur.last ? m[1] : cur.last });
+  }
+  let best = null;
+  for (const [shape, v] of seen) if (!best || v.n > best.n || (v.n === best.n && v.last > best.last)) best = { shape, ...v };
+  return best ? best.shape : DEFAULT_DAILY;
+}
+// The daily template: a note called "daily" (or "daily note") in a templates folder.
+function detectTemplate(rels) {
+  return rels.find((r) => /(^|\/)templates?\/daily( note)?\.md$/i.test(r)) || '';
+}
+// Fills Obsidian's core template variables: {{date}}, {{date:FORMAT}}, {{time}}, {{title}}, plus {{yesterday}}/{{tomorrow}}.
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+function fmt(d, f) {
+  return String(f || 'YYYY-MM-DD').replace(/YYYY|MMMM|MMM|MM|M|DD|D|dddd|ddd|HH|mm/g, (t) => ({
+    YYYY: d.getFullYear(), MMMM: MONTHS[d.getMonth()], MMM: MONTHS[d.getMonth()].slice(0, 3), MM: pad(d.getMonth() + 1), M: d.getMonth() + 1,
+    DD: pad(d.getDate()), D: d.getDate(), dddd: WEEKDAYS[d.getDay()], ddd: WEEKDAYS[d.getDay()].slice(0, 3), HH: pad(d.getHours()), mm: pad(d.getMinutes()) }[t]));
+}
+function fillTemplate(text, now, title) {
+  const day = (k) => { const x = new Date(now); x.setDate(x.getDate() + k); return x; };
+  return String(text)
+    .replace(/\{\{date(?::([^}]*))?\}\}/g, (_, f) => fmt(now, f))
+    .replace(/\{\{time(?::([^}]*))?\}\}/g, (_, f) => fmt(now, f || 'HH:mm'))
+    .replace(/\{\{title\}\}/g, title || ymd(now))
+    .replace(/\{\{yesterday\}\}/g, ymd(day(-1))).replace(/\{\{tomorrow\}\}/g, ymd(day(1)));
+}
+
+// Makes sure today's daily note exists, where the user keeps them, from their template when there is one.
+// spec: { pattern, template } (see dailyRel / detectTemplate). Returns { rel, abs, created }.
+function ensureDaily(cfg, now, resolveInside, spec = {}) {
+  const rel = dailyRel(spec.pattern, now);
   const abs = resolveInside(cfg.vaultWin, rel);
   if (fs.existsSync(abs)) return { rel, abs, created: false };
   let body = `# ${ymd(now)}\n\n`;
-  try {
-    body = fs.readFileSync(path.join(cfg.vaultWin, 'Templates', 'daily.md'), 'utf8')
-      .replace(/\{\{date(?::[^}]*)?\}\}/g, ymd(now)).replace(/\{\{title\}\}/g, ymd(now)).replace(/\{\{time(?::[^}]*)?\}\}/g, `${pad(now.getHours())}:${pad(now.getMinutes())}`);
-  } catch { /* no template: a plain heading */ }
+  const tpl = spec.template === undefined ? 'Templates/daily.md' : spec.template;
+  if (tpl) try { body = fillTemplate(fs.readFileSync(resolveInside(cfg.vaultWin, tpl), 'utf8'), now, path.basename(rel, '.md')); } catch { /* no template: a plain heading */ }
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, body, { flag: 'wx' });
   return { rel, abs, created: true };
@@ -83,7 +128,7 @@ function captureEntry(text, source, now) {
   return `- ${time}${from}\n${t.split('\n').map((l) => `  > ${l}`).join('\n')}\n`;
 }
 
-function start({ loadCfg, userFile, readJson, resolveInside, runAgent, notify }) {
+function start({ loadCfg, userFile, readJson, resolveInside, runAgent, notify, dailySpec = () => ({}) }) {
   const stateFile = () => userFile('schedule.json');
   const state = () => readJson(stateFile(), {});
   const save = (patch) => { try { fs.writeFileSync(stateFile(), JSON.stringify({ ...state(), ...patch })); } catch { /* best effort */ } };
@@ -91,7 +136,7 @@ function start({ loadCfg, userFile, readJson, resolveInside, runAgent, notify })
 
   function dailyNote(cfg, now) {
     if (!cfg.schedule.dailyDays.includes(now.getDay()) || now.getHours() < 5) return;
-    const { rel, created } = ensureDaily(cfg, now, resolveInside);
+    const { rel, created } = ensureDaily(cfg, now, resolveInside, dailySpec(cfg));
     if (!created) return;
     notify('Daily note ready', rel);
   }
@@ -153,4 +198,4 @@ function start({ loadCfg, userFile, readJson, resolveInside, runAgent, notify })
   };
 }
 
-module.exports = { start, isoWeek, weeklyDue, weeklyPrompt, promptDue, customPrompt, ensureDaily, captureEntry };
+module.exports = { start, isoWeek, weeklyDue, weeklyPrompt, promptDue, customPrompt, ensureDaily, captureEntry, dailyRel, detectDaily, detectTemplate, fillTemplate, DEFAULT_DAILY };

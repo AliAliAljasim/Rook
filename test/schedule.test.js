@@ -52,3 +52,15 @@ test('one of the user\'s own prompts is due on its days from its hour, until it 
   assert.match(p, /Wednesday 2026-11-11/);
   assert.match(p, /"Morning brief":\nList what is open\.$/);
 });
+
+test('daily notes: the location is read off the vault, and templates are filled', () => {
+  const { detectDaily, detectTemplate, dailyRel, fillTemplate, DEFAULT_DAILY } = require('../src/schedule');
+  assert.equal(detectDaily(['01 Daily/2026/11/2026-11-12.md', '01 Daily/2026/11/2026-11-13.md', 'Daily/2026-11-14.md', 'Notes/x.md']), '01 Daily/{YYYY}/{MM}/{YYYY}-{MM}-{DD}.md');
+  assert.equal(detectDaily(['Journal/2025-01-02.md']), 'Journal/{YYYY}-{MM}-{DD}.md');
+  assert.equal(detectDaily(['2025-01-02.md']), '{YYYY}-{MM}-{DD}.md');
+  assert.equal(detectDaily([]), DEFAULT_DAILY);
+  assert.equal(dailyRel('01 Daily/{YYYY}/{MM}/{YYYY}-{MM}-{DD}.md', new Date(2026, 0, 5)), '01 Daily/2026/01/2026-01-05.md');
+  assert.equal(detectTemplate(['Templates/Learned.md', 'Templates/Daily.md']), 'Templates/Daily.md');
+  assert.equal(detectTemplate(['Templates/Weekly.md']), '');
+  assert.equal(fillTemplate('date: {{date:YYYY-MM-DD}}\n← [[{{yesterday}}]] {{date:dddd D MMMM}} {{time}}', new Date(2026, 10, 1, 9, 5)), 'date: 2026-11-01\n← [[2026-10-31]] Sunday 1 November 09:05');
+});

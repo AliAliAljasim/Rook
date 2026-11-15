@@ -3,11 +3,13 @@ const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { buildPolicy, SYSTEM_PROMPT } = require('./policy');
+const { buildPolicy, SYSTEM_PROMPT, isProtected } = require('./policy');
 const { resolveInside } = require('./guard');
 const schedule = require('./schedule');
 const voiceEngine = require('./voice');
 const scan = require('./vaultscan');
+const starter = require('./starter');
+const { cleanExtras } = require('./settings');
 const clip = require('./clip');
 const moves = require('./moves');
 
@@ -32,6 +34,18 @@ const DEFAULTS = {
   keys: {},            // the user's changed shortcuts, { action: 'Ctrl+N' }; defaults live in the renderer
   theme: 'dark',       // 'dark' | 'light' | 'system'
   textSize: 'regular', // 'small' | 'regular' | 'large'
+  // 'on' | 'system' | 'off'. On by default: Windows reports reduced motion whenever "Animation effects" is off (common on
+  // tuned or remote PCs), which would otherwise silently stop every animation, the startup and the reply status included.
+  motion: 'on',
+  // How the agent behaves is the user's: their vault's CLAUDE.md plus these instructions. Rook only fixes the limits.
+  instructions: '',    // the user's own standing instructions for the agent, added to every run
+  allowMoves: true,    // the agent may move and rename in the vault (through the <files> block)
+  allowDeletes: true,  // the agent may delete in the vault (to the Recycle Bin)
+  protect: [],         // vault folders or notes the agent may read but never change, move or delete
+  dailyNote: '',       // where daily notes go, e.g. '01 Daily/{YYYY}/{MM}/{YYYY}-{MM}-{DD}.md'; blank: read off the vault
+  dailyTemplate: '',   // the daily note template; blank: Templates/daily.md or similar, when there is one
+  hidden: [],          // notes ('a/b.md') and folders ('a/') the user hid from the Notes page and the map
+  mapShow: { hidden: false, files: false, missing: false, changes: true }, // what the map draws besides visible notes
   model: '',           // '' lets the Claude CLI choose; otherwise one of MODELS
   effort: '',          // '' lets the CLI choose; otherwise one of EFFORTS
   projects: [],        // [{ name, path }] folders Rook should know by name (path as WSL sees it)
@@ -130,38 +144,91 @@ function buildGraph(root) {
   const files = walkVault(root);
   const sig = root + '|' + files.length + '|' + files.reduce((a, f) => a + f.mtimeMs, 0);
   if (graphCache.sig === sig) return graphCache.data;
-  const resolve = noteIndex(files);
-  const idx = new Map(files.map((f, i) => [f.rel, i]));
-  const seen = new Set(), edges = [];
-  const re = /\[\[([^\]\n]+)\]\]/g;
-  files.forEach((f, i) => {
-    let text;
-    try {
-      const abs = path.join(root, f.rel);
-      if (fs.statSync(abs).size > 1024 * 1024) return;
-      text = fs.readFileSync(abs, 'utf8');
-    } catch { return; }
-    let m;
-    while ((m = re.exec(text))) {
-      const to = resolve(m[1]);
-      if (!to) continue;
-      const j = idx.get(to);
-      if (j === i) continue;
-      const key = i < j ? i + ':' + j : j + ':' + i;
-      if (!seen.has(key)) { seen.add(key); edges.push([i, j]); }
-    }
+  const notes = files.map((f) => {
+    try { const abs = path.join(root, f.rel); return { rel: f.rel, text: fs.statSync(abs).size > 1024 * 1024 ? null : fs.readFileSync(abs, 'utf8') }; }
+    catch { return { rel: f.rel, text: null }; }
   });
-  const data = { nodes: files.map((f) => { const v = noteView(f); return { id: v.file, title: v.title, folder: v.folder }; }), edges };
+  const data = scan.graph(notes, otherFiles(root));
   graphCache = { sig, data };
   return data;
 }
+
+// Where today's daily note goes and what it starts from: the user's settings, or else what the vault already does.
+// Order: Rook's Settings, then Obsidian's own daily-notes settings (when the user set a folder or format there), then
+// the shape of the daily notes already in the vault.
+function dailySpec(cfg) {
+  let rels = null;
+  const list = () => rels || (rels = walkVault(cfg.vaultWin).map((f) => f.rel));
+  let obs = null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(cfg.vaultWin, '.obsidian', 'daily-notes.json'), 'utf8'));
+    if (raw && (raw.folder || raw.format)) obs = starter.dailyFromObsidian(raw);
+  } catch { /* not set in Obsidian */ }
+  return { pattern: cfg.dailyNote || (obs && obs.pattern) || schedule.detectDaily(list()),
+    template: cfg.dailyTemplate || (obs && obs.template) || schedule.detectTemplate(list()) };
+}
+// ---- starting layout (src/starter.js): only what is missing is ever added -------------------
+function starterPlan(root) {
+  const today = schedule.dailyRel('{YYYY}-{MM}-{DD}', new Date());
+  return starter.starterFiles(today).filter((f) => {
+    try { return !fs.existsSync(resolveInside(root, f.rel)); } catch { return false; }
+  });
+}
+function applyStarter(root) {
+  const added = [];
+  for (const f of starterPlan(root)) {
+    let content = f.content;
+    // Obsidian finds templates by exact name: point its settings at the template file as it is really spelled.
+    if (f.rel === '.obsidian/daily-notes.json') {
+      const real = schedule.detectTemplate(walkVault(root).map((x) => x.rel));
+      if (real) content = JSON.stringify({ ...JSON.parse(content), template: real.replace(/\.md$/i, '') }, null, 2);
+    }
+    const abs = resolveInside(root, f.rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    try { fs.writeFileSync(abs, content, { flag: 'wx' }); added.push(f.rel); } catch { /* appeared meanwhile: leave it */ }
+  }
+  for (const d of starter.starterFolders()) fs.mkdirSync(resolveInside(root, d), { recursive: true });
+  walkCache.at = 0; graphCache.sig = '';
+  return added;
+}
+ipcMain.handle('vault:starter', () => { const root = loadCfg().vaultWin; return root && fs.existsSync(root) ? starterPlan(root).map((f) => f.rel) : []; });
+ipcMain.handle('vault:starterApply', () => {
+  const cfg = loadCfg();
+  if (!cfg.vaultWin || !fs.existsSync(cfg.vaultWin)) return { ok: false, reason: 'Choose your vault folder first.' };
+  try {
+    const added = applyStarter(cfg.vaultWin);
+    // The agent's memory and the templates are not notes to browse: keep them off the map unless the user shows them.
+    fs.writeFileSync(userFile('config.json'), JSON.stringify({ ...readJson(userFile('config.json'), {}), hidden: [...new Set([...(cfg.hidden || []), 'Claude/', 'Templates/'])] }, null, 2));
+    return { ok: true, added };
+  } catch (e) { return { ok: false, reason: `Could not add everything: ${e.message}` }; }
+});
+ipcMain.handle('daily:info', (_, over) => {
+  const cfg = { ...loadCfg(), ...(over || {}) };
+  const auto = dailySpec({ ...cfg, dailyNote: '', dailyTemplate: '' }), spec = dailySpec(cfg);
+  return { ...spec, autoPattern: auto.pattern, autoTemplate: auto.template, today: schedule.dailyRel(spec.pattern, new Date()) };
+});
+// The vault's own CLAUDE.md: the user's instructions for the agent. Its workflows become the home page's actions.
+ipcMain.handle('vault:claude', () => {
+  const root = loadCfg().vaultWin;
+  try { const text = fs.readFileSync(resolveInside(root, 'CLAUDE.md'), 'utf8'); return { exists: true, workflows: scan.workflowsIn(text) }; }
+  catch { return { exists: false, workflows: [] }; }
+});
+ipcMain.handle('vault:claudeCreate', () => {
+  const abs = resolveInside(loadCfg().vaultWin, 'CLAUDE.md');
+  if (fs.existsSync(abs)) return true;
+  fs.writeFileSync(abs, [
+    '# CLAUDE.md', '', 'Instructions for Rook. Write here how you want it to work: tone, where notes go, what to ask before doing.', '',
+    '## Workflows', '', 'Each "### \"Trigger phrase\"" heading below becomes a button on Rook\'s home page.', '',
+    '### "Start my day"', '1. Create today\'s daily note if it does not exist and fill in the plan from yesterday.', ''].join('\n'), { flag: 'wx' });
+  return true;
+});
 
 const createdByApp = new Set(); // rel paths of notes this app created (so Undo can remove them)
 
 // ---- window ------------------------------------------------------------------------
 const isLight = (cfg) => cfg.theme === 'light' || (cfg.theme === 'system' && !nativeTheme.shouldUseDarkColors);
 // The page asks for these synchronously before it draws, so it never flashes the wrong theme or size.
-ipcMain.on('config:initial', (e) => { const c = loadCfg(); e.returnValue = { theme: isLight(c) ? 'light' : 'dark', textSize: c.textSize }; });
+ipcMain.on('config:initial', (e) => { const c = loadCfg(); e.returnValue = { theme: isLight(c) ? 'light' : 'dark', textSize: c.textSize, motion: c.motion }; });
 let win, child, savedBounds = null, savedMax = false, miniMode = null;
 function createWindow(show = true) {
   win = new BrowserWindow({
@@ -234,7 +301,8 @@ function captureSelection() {
     if (!text.trim()) return tell('Nothing to capture', 'Highlight some text or copy something first.');
     try {
       const now = new Date();
-      const { rel, abs } = schedule.ensureDaily(loadCfg(), now, resolveInside);
+      const cfg = loadCfg();
+      const { rel, abs } = schedule.ensureDaily(cfg, now, resolveInside, dailySpec(cfg));
       const cur = fs.readFileSync(abs, 'utf8');
       fs.appendFileSync(abs, (cur && !cur.endsWith('\n') ? '\n' : '') + schedule.captureEntry(text, source, now));
       tell('Captured to today’s note', `${rel}: ${text.trim().replace(/\s+/g, ' ').slice(0, 90)}`);
@@ -289,7 +357,8 @@ ipcMain.handle('config:set', (_, c) => {
     model: c.model === '' ? '' : oneOf(c.model, MODELS, cur.model),
     effort: c.effort === '' ? '' : oneOf(c.effort, EFFORTS, cur.effort),
     projects: cleanProjects(c.projects),
-    schedule: cleanSchedule(c.schedule)
+    schedule: cleanSchedule(c.schedule),
+    ...cleanExtras(c, cur)
   };
   fs.writeFileSync(userFile('config.json'), JSON.stringify(next, null, 2));
   applyLoginItem(next);
@@ -370,9 +439,13 @@ ipcMain.handle('setup:detect', async () => {
   return { name: user ? user[0].toUpperCase() + user.slice(1) : '', vaults: findVaults(), claudePath: claude.path, wsl: claude.wsl };
 });
 // A new vault: the folder and an empty .obsidian, so Obsidian opens it as a vault.
-ipcMain.handle('vault:create', (_, dir) => {
+ipcMain.handle('vault:create', (_, dir, opts = {}) => {
   if (typeof dir !== 'string' || !/^[A-Za-z]:\\/.test(dir.trim())) return { ok: false, reason: 'Use a full Windows path, like C:\\Users\\you\\Documents\\Vault.' };
-  try { fs.mkdirSync(path.join(dir.trim(), '.obsidian'), { recursive: true }); return { ok: true }; }
+  try {
+    fs.mkdirSync(path.join(dir.trim(), '.obsidian'), { recursive: true });
+    if (opts.starter) applyStarter(dir.trim()); // a new vault with Rook's folders, templates and CLAUDE.md
+    return { ok: true };
+  }
   catch (e) { return { ok: false, reason: `Could not create the folder: ${e.message}` }; }
 });
 // Is the CLI path real? Runs `claude --version` inside WSL.
@@ -650,7 +723,8 @@ function agentArgs(cfg, outputFlags) {
   const vaultWsl = toWsl(cfg.vaultWin);
   // Policy lives outside the vault so the agent cannot modify it.
   const policyFile = userFile('policy.json');
-  fs.writeFileSync(policyFile, JSON.stringify(buildPolicy(vaultWsl, cfg.readScope, { webSearch: cfg.webSearch !== false }), null, 2));
+  fs.writeFileSync(policyFile, JSON.stringify(buildPolicy(vaultWsl, cfg.readScope, { webSearch: cfg.webSearch !== false, protect: cfg.protect }), null, 2));
+  const spec = dailySpec(cfg);
   const args = ['--cd', `/${vaultWsl}`, '-e', cfg.claudePath, '-p', ...outputFlags,
     '--settings', `/${toWsl(policyFile)}`,
     '--append-system-prompt', SYSTEM_PROMPT(`/${vaultWsl}`, cfg.readScope, {
@@ -658,7 +732,9 @@ function agentArgs(cfg, outputFlags) {
       winHome: (/^\/mnt\/[a-z]\/Users\/[^/]+/i.exec(`/${vaultWsl}`) || [])[0],
       projects: cfg.projects,
       webSearch: cfg.webSearch !== false,
-      now: nowForAgent()
+      now: nowForAgent(),
+      daily: { ...spec, today: schedule.dailyRel(spec.pattern, new Date()) },
+      instructions: cfg.instructions, allowMoves: cfg.allowMoves, allowDeletes: cfg.allowDeletes, protect: cfg.protect
     })];
   // Reading the whole machine: the CLI only lists and searches inside its working directories, so add the
   // filesystem root as one. This does not grant writes: with no allow rule for them, edits and any shell
@@ -723,12 +799,16 @@ function filesUnder(abs, rel) {
   return fs.readdirSync(abs, { withFileTypes: true }).flatMap((e) => filesUnder(path.join(abs, e.name), `${rel}/${e.name}`));
 }
 ipcMain.handle('vault:move', async (_, list) => {
-  const root = loadCfg().vaultWin;
+  const cfg = loadCfg(), root = cfg.vaultWin;
+  // The user's limits from Settings hold even if the agent asks anyway.
+  const refuse = (p) => (isProtected(p, cfg.protect) ? 'protected in Settings' : null);
   const done = [], failed = [], deleted = [], map = [];
   for (const m of (Array.isArray(list) ? list : []).slice(0, 200)) {
     if (m?.op === 'delete') { // to the Recycle Bin, where the user can restore it
       const p = String(m.path || '');
       try {
+        if (cfg.allowDeletes === false) throw new Error('deleting is turned off in Settings');
+        if (refuse(p)) throw new Error(refuse(p));
         if (!moves.okPath(p)) throw new Error('not a path inside the vault');
         const a = resolveInside(root, p);
         if (!fs.existsSync(a)) throw new Error('not found');
@@ -739,6 +819,8 @@ ipcMain.handle('vault:move', async (_, list) => {
     }
     const from = String(m?.from || ''), to = String(m?.to || '');
     try {
+      if (cfg.allowMoves === false) throw new Error('moving is turned off in Settings');
+      if (refuse(from) || refuse(to)) throw new Error('protected in Settings');
       if (!moves.okPath(from) || !moves.okPath(to)) throw new Error('not a path inside the vault');
       const a = resolveInside(root, from), b = resolveInside(root, to);
       if (!fs.existsSync(a)) throw new Error('not found');
@@ -919,7 +1001,7 @@ app.whenReady().then(() => {
   registerSummon();
   pruneBackups();
   if (!TRY) scheduler = schedule.start({
-    loadCfg, userFile, readJson, resolveInside,
+    loadCfg, userFile, readJson, resolveInside, dailySpec,
     // One headless agent run; resolves with what it wrote back.
     runAgent: (prompt) => new Promise((resolve) => {
       const unready = agentProblem(loadCfg());

@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer, webFrame } = require('electron');
 // Theme and text size are fetched before the page draws, so it never flashes the wrong ones.
 const ZOOM = { small: 0.9, regular: 1, large: 1.12 };
-let initial = { theme: 'dark', textSize: 'regular' };
+let initial = { theme: 'dark', textSize: 'regular', motion: 'on' };
 try { initial = ipcRenderer.sendSync('config:initial') || initial; } catch { /* defaults */ }
 webFrame.setZoomFactor(ZOOM[initial.textSize] || 1);
 const inv = (c) => (...a) => ipcRenderer.invoke(c, ...a);
@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld('api', {
   cancel: () => ipcRenderer.send('chat:cancel'),
   onEvent: (cb) => ipcRenderer.on('chat:event', (_, ev) => cb(ev)),
   getConfig: inv('config:get'), setConfig: inv('config:set'), pickFolder: inv('dialog:pickFolder'), checkProject: inv('project:check'),
-  vaultInfo: inv('vault:info'), createVault: inv('vault:create'),
+  vaultInfo: inv('vault:info'), createVault: inv('vault:create'), starter: { plan: inv('vault:starter'), apply: inv('vault:starterApply') },
   setup: { detect: inv('setup:detect'), checkClaude: inv('setup:checkClaude') }, recentNotes: inv('vault:recent'),
   listNotes: inv('vault:list'), graph: inv('vault:graph'), resolveNote: inv('note:resolve'), readNote: inv('note:read'), version: inv('app:version'),
   openNote: inv('note:open'), openExternal: inv('ext:open'),
@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('api', {
   tasks: { list: inv('tasks:list'), set: inv('tasks:set') },
   health: { get: inv('vault:health'), trash: inv('health:trash'), create: inv('health:create') },
   clip: inv('clip:fetch'),
+  daily: inv('daily:info'), claudeMd: { get: inv('vault:claude'), create: inv('vault:claudeCreate') },
   onSummon: (cb) => ipcRenderer.on('app:summon', () => cb()),
   onSchedule: (cb) => ipcRenderer.on('schedule:event', (_, ev) => cb(ev)),
   copy: (t) => ipcRenderer.send('clipboard:write', t),

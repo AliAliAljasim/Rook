@@ -1,5 +1,7 @@
 // The Map: a force-directed graph of notes (dots) and [[links]] (lines), drawn on a canvas.
 // Pan by dragging the background, zoom with the wheel, drag a dot to move it, click a dot to select it.
+// Kinds: notes are dots, attachments small squares, links to notes that do not exist hollow rings. Hidden notes
+// (shown only when asked) are faint; notes Rook changed carry a pulsing accent ring.
 (function () {
   // Colours come from the stylesheet's variables, so the map follows the light or dark theme.
   let palKey = null, pal = null;
@@ -10,22 +12,29 @@
     const fgRgb = key === 'light' ? '42,38,34' : '238,232,223';
     palKey = key;
     pal = { accent: v('--accent'), fg: v('--fg'), node: v('--graph-node'), orphan: v('--graph-orphan'),
+      accentRgb: v('--accent-rgb'), bg: v('--bg'), muted: v('--muted-2') || v('--graph-orphan'),
       edgeOn: `rgba(${v('--accent-rgb')},.7)`, edge: `rgba(${v('--ov')},${key === 'light' ? .2 : .11})`, edgeDim: `rgba(${v('--ov')},${key === 'light' ? .07 : .035})`, label: `rgba(${fgRgb},.72)` };
     return pal;
   }
 
   function create(canvas, data, opts) {
     const ctx = canvas.getContext('2d');
-    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduce = document.documentElement.dataset.motion === 'reduce';
     const n = data.nodes.length;
+    const known = opts.positions || new Map(); // where the dots were last time, so a rebuilt map does not jump
+    let placed = 0;
     const nodes = data.nodes.map((d, i) => {
       const a = i * 2.399963, r = 26 * Math.sqrt(i + 1); // sunflower start: spread out, deterministic
-      return { ...d, i, x: Math.cos(a) * r, y: Math.sin(a) * r, vx: 0, vy: 0, deg: 0, nb: new Set() };
+      const p = known.get(d.id); if (p) placed++;
+      return { ...d, i, x: p ? p.x : Math.cos(a) * r, y: p ? p.y : Math.sin(a) * r, vx: 0, vy: 0, deg: 0, nb: new Set() };
     });
     const edges = data.edges.map(([a, b]) => { nodes[a].deg++; nodes[b].deg++; nodes[a].nb.add(b); nodes[b].nb.add(a); return [nodes[a], nodes[b]]; });
-    nodes.forEach((d) => { d.r = 3 + Math.min(9, Math.sqrt(d.deg) * 1.7); });
+    nodes.forEach((d) => { d.r = (d.kind && d.kind !== 'note' ? 2.5 : 3) + Math.min(9, Math.sqrt(d.deg) * 1.7); });
+    let changed = new Map(opts.changed || []); // id -> what Rook did to it
 
-    let scale = 1, tx = 0, ty = 0, alpha = 1, raf = 0, dead = false;
+    // A map rebuilt with the same notes starts nearly settled, from where it was.
+    let scale = 1, tx = 0, ty = 0, alpha = n && placed / n > 0.8 ? 0.12 : 1, raf = 0, dead = false;
+    if (opts.view) ({ scale, tx, ty } = opts.view);
     let hover = null, selected = null, filter = '', drag = null, moved = false, w = 0, h = 0;
 
     function tick() {
@@ -75,6 +84,7 @@
       const C = colours(), ACCENT = C.accent, FG = C.fg, NODE = C.node, ORPHAN = C.orphan;
       const lit = (d) => !focus || d === focus || focus.nb.has(d.i);
       const match = (d) => !filter || d.title.toLowerCase().includes(filter);
+      const pulse = reduce ? 0.5 : (Math.sin(performance.now() / 420) + 1) / 2;
       ctx.lineWidth = 1 / scale;
       for (const [a, b] of edges) {
         const on = focus && (a === focus || b === focus);
@@ -83,20 +93,40 @@
       }
       for (const d of nodes) {
         const dim = !lit(d) || !match(d);
-        ctx.globalAlpha = dim ? 0.22 : 1;
-        ctx.fillStyle = d === focus || d === selected || (filter && match(d)) ? ACCENT : d.deg ? NODE : ORPHAN;
-        ctx.beginPath(); ctx.arc(d.x, d.y, d.r / Math.sqrt(scale), 0, Math.PI * 2); ctx.fill();
+        const r = d.r / Math.sqrt(scale);
+        ctx.globalAlpha = (dim ? 0.22 : 1) * (d.hidden ? 0.45 : 1);
+        const fill = d === focus || d === selected || (filter && match(d)) ? ACCENT : d.kind === 'file' ? C.muted : d.deg ? NODE : ORPHAN;
+        if (d.kind === 'missing') {
+          ctx.strokeStyle = fill; ctx.lineWidth = 1.4 / scale; ctx.setLineDash([2 / scale, 2 / scale]);
+          ctx.beginPath(); ctx.arc(d.x, d.y, r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1 / scale;
+        } else if (d.kind === 'file') {
+          ctx.fillStyle = fill; ctx.fillRect(d.x - r * 0.85, d.y - r * 0.85, r * 1.7, r * 1.7);
+        } else { ctx.fillStyle = fill; ctx.beginPath(); ctx.arc(d.x, d.y, r, 0, Math.PI * 2); ctx.fill(); }
+        if (d.hidden) {
+          ctx.strokeStyle = fill; ctx.lineWidth = 1 / scale; ctx.setLineDash([3 / scale, 3 / scale]);
+          ctx.beginPath(); ctx.arc(d.x, d.y, r + 3 / scale, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+        }
+        if (changed.has(d.id)) {
+          ctx.globalAlpha = dim ? 0.3 : 1;
+          ctx.strokeStyle = `rgba(${C.accentRgb},${0.35 + 0.5 * (1 - pulse)})`; ctx.lineWidth = 2 / scale;
+          ctx.beginPath(); ctx.arc(d.x, d.y, r + (4 + 5 * pulse) / scale, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 1 / scale;
+        }
         if (d === selected) { ctx.strokeStyle = ACCENT; ctx.lineWidth = 1.5 / scale; ctx.beginPath(); ctx.arc(d.x, d.y, d.r / Math.sqrt(scale) + 4 / scale, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 1 / scale; }
       }
       ctx.globalAlpha = 1;
-      // labels: the focused note and its neighbours, filter matches, and (when zoomed in) well-connected notes
+      // Names only on hover: the note under the pointer and the notes linked to it (or the matches while searching).
+      // Each sits on a small backing so it stays readable over lines and dots.
       ctx.font = `${12 / scale}px "Instrument Sans", system-ui, sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       for (const d of nodes) {
-        const show = focus ? (d === focus || focus.nb.has(d.i)) : filter ? match(d) : (scale > 1.25 || d.deg >= 4 || n <= 40);
+        const show = hover ? (d === hover || hover.nb.has(d.i)) : filter ? match(d) : false;
         if (!show) continue;
-        ctx.fillStyle = d === focus ? FG : C.label;
         const t = d.title.length > 30 ? d.title.slice(0, 29) + '…' : d.title;
+        const tw = ctx.measureText(t).width, ly = d.y + d.r / Math.sqrt(scale) + 5 / scale, px = 4 / scale;
+        ctx.fillStyle = C.bg; ctx.globalAlpha = 0.82;
+        ctx.fillRect(d.x - tw / 2 - px, ly - 2 / scale, tw + px * 2, 16 / scale);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = d === hover ? FG : C.label;
         ctx.fillText(t, d.x, d.y + d.r / Math.sqrt(scale) + 5 / scale);
       }
     }
@@ -106,7 +136,8 @@
       if (dead) return;
       if (alpha > 0.02) { tick(); if (!userMoved) fit(); }
       draw();
-      if (alpha > 0.02 || drag) raf = requestAnimationFrame(frame);
+      // Changed notes pulse, so the map keeps drawing while there are any (and the page is visible).
+      if (alpha > 0.02 || drag || (changed.size && !reduce && canvas.isConnected && canvas.offsetParent)) raf = requestAnimationFrame(frame);
     }
     let userMoved = false;
     const kick = () => { if (!raf && !dead) raf = requestAnimationFrame(frame); };
@@ -117,8 +148,8 @@
       const first = !w;
       w = r.width; h = r.height;
       canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
-      if (first) fit();
-      draw();
+      if ((first && !opts.view) || (!first && !userMoved)) fit(); // the note panel opening or closing re-centres an untouched map
+      draw(); kick();
     }
     const ro = new ResizeObserver(resize); ro.observe(canvas);
 
@@ -152,6 +183,7 @@
       if (d && !moved) { selected = d.node || null; opts.onSelect && opts.onSelect(selected ? info(selected) : null); draw(); }
     });
     canvas.addEventListener('pointerleave', () => { if (hover && !drag) { hover = null; draw(); } });
+    canvas.addEventListener('contextmenu', (e) => { const d = pick(e); if (d && opts.onContext) opts.onContext(e, info(d)); else e.preventDefault(); });
     canvas.addEventListener('dblclick', (e) => { const d = pick(e); if (d && opts.onOpen) opts.onOpen(d.id); });
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
@@ -162,9 +194,10 @@
       const ns = Math.max(0.1, Math.min(5, scale * k));
       tx = mx - (mx - tx) * (ns / scale); ty = my - (my - ty) * (ns / scale); scale = ns; userMoved = true; draw();
     }
-    const info = (d) => ({ id: d.id, title: d.title, folder: d.folder, links: d.deg });
+    const info = (d) => ({ id: d.id, title: d.title, folder: d.folder, links: d.deg, kind: d.kind || 'note', hidden: !!d.hidden, changed: changed.get(d.id) || null });
 
-    if (reduce) { for (let k = 0; k < 260; k++) tick(); alpha = 0; }
+    if (reduce && alpha === 1) { for (let k = 0; k < 260; k++) tick(); alpha = 0; }
+    if (opts.view) userMoved = true;
     resize(); kick();
 
     return {
@@ -172,13 +205,24 @@
       zoom(k) { zoomAt(w / 2, h / 2, k); },
       fit() { userMoved = false; fit(); draw(); },
       setFilter(q) { filter = String(q || '').toLowerCase().trim(); draw(); },
-      select(id) {
+      // quiet: the page already knows (it opened the note itself); only move the view if the dot is out of sight.
+      select(id, quiet) {
         const d = nodes.find((x) => x.id === id) || null;
-        selected = d; opts.onSelect && opts.onSelect(d ? info(d) : null);
-        if (d) { fit(); userMoved = true; scale = Math.min(1.6, Math.max(scale, 1.15)); tx = w / 2 - d.x * scale; ty = h / 2 - d.y * scale; }
+        selected = d;
+        if (!quiet) opts.onSelect && opts.onSelect(d ? info(d) : null);
+        if (d && w) {
+          const sx = d.x * scale + tx, sy = d.y * scale + ty, edge = 60;
+          if (!quiet) { fit(); userMoved = true; scale = Math.min(1.6, Math.max(scale, 1.15)); tx = w / 2 - d.x * scale; ty = h / 2 - d.y * scale; }
+          else if (sx < edge || sx > w - edge || sy < edge || sy > h - edge) { userMoved = true; tx = w / 2 - d.x * scale; ty = h / 2 - d.y * scale; }
+        }
         draw();
       },
       settle() { for (let k = 0; k < 260; k++) tick(); alpha = 0; fit(); draw(); },
+      wake() { kick(); },
+      setChanged(m) { changed = new Map(m || []); draw(); kick(); },
+      positions() { return new Map(nodes.map((d) => [d.id, { x: d.x, y: d.y }])); },
+      view() { return userMoved ? { scale, tx, ty } : null; },
+      selected() { return selected ? selected.id : null; },
       counts: { notes: n, links: edges.length }
     };
   }

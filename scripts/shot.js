@@ -16,7 +16,7 @@ const chats = [
       { t: 'tool', id: 'a', name: 'Grep', verb: 'Searched', rest: ' for “Atlas”', status: 'done', lines: [{ a: 'Projects/Atlas/launch-plan.md', b: '6 hits' }] },
       { t: 'tool', id: 'b', name: 'Read', verb: 'Read', rest: ' Projects/Atlas/launch-plan.md', status: 'done', lines: [{ a: 'Projects/Atlas/launch-plan.md', b: '' }] },
       { t: 'text', text: '## Project Atlas — where things stand\n\nYou last touched [[Atlas launch plan]] on Monday. The one decision so far is in [[1-1 with Sam]]:\n\n> Ship the print edition first; the web edition follows once proofs are signed off.\n\n### Still open\n\n- Printer quote — waiting on a **revised figure**\n- Cover typeface licence for the web\n- Launch date, pending `proofs`\n\n### This week\n\n- [x] Send final manuscript to the printer\n- [ ] Confirm proof dates with Sam\n\n| Item | Cost |\n| --- | --- |\n| Print run | 4,200 |\n| Proofs | 380 |\n\n```js\nconst launch = plan.filter(t => !t.done);\n```' },
-      { t: 'chips', items: [{ verb: 'Edited', path: 'Projects/Atlas/launch-plan.md', diff: '+3 −1', id: 'toolu_demo', backup: 'edit' }, { verb: 'Created', path: 'Projects/Atlas/Status 2026-11-11.md', diff: 'new' }] },
+      { t: 'chips', items: [{ verb: 'Edited', path: 'Projects/Atlas/Atlas launch plan.md', diff: '+3 −1', id: 'toolu_demo', backup: 'edit' }, { verb: 'Created', path: 'Projects/Atlas/Status 2026-11-11.md', diff: 'new' }] },
       { t: 'tool', id: 'c', name: 'Edit', verb: 'Edited', rest: ' C:\\Users\\Ali\\Downloads\\quote.txt', status: 'failed', err: 'Blocked by read-only rules', lines: [{ a: 'C:\\Users\\Ali\\Downloads\\quote.txt', b: '' }] },
       { t: 'blocked', path: 'C:\\Users\\Ali\\Downloads\\printer-quote.pdf' }]) ] },
   { id: 'c2', title: 'Weekly review, week 45', when: now - 86400e3, pinned: false, msgs: [{ role: 'user', text: 'Make observations about this week’s notes.', time: '18:02' }, bot([{ t: 'text', text: 'Quiet week: two notes changed, both about Atlas. Where should I keep these observations?\n\n<choices>\n- Save them to Reviews/2026-W45.md\n- Add them to today’s daily note\n- Just keep them in this chat\n</choices>' }])] },
@@ -39,7 +39,7 @@ const healthData = { notes: 25, broken: [{ file: 'Projects/Atlas/Atlas launch pl
   duplicates: [{ name: 'Budget', files: ['Archive/Budget.md', 'Projects/Atlas/Budget.md'] }] };
 let lastPrompt = '';
 const E = [[1,2],[1,3],[1,4],[1,5],[1,6],[1,7],[1,8],[1,17],[1,18],[2,5],[2,8],[2,19],[5,3],[6,16],[7,16],[9,10],[9,16],[11,1],[11,12],[11,9],[13,14],[0,1],[0,2],[0,11],[15,1],[15,9],[18,19],[21,15]];
-const graph = { nodes: all.map((n) => ({ id: n.file, title: n.title, folder: n.folder })), edges: E };
+const graph = { nodes: all.map((n) => ({ id: n.file, title: n.title, folder: n.folder, kind: 'note' })).concat([{ id: 'Attachments/cover-draft.png', title: 'cover-draft.png', folder: 'Attachments/', kind: 'file' }, { id: 'missing:missing note', title: 'Missing note', folder: '', kind: 'missing' }]), edges: E.concat([[2, 25], [2, 26]]) };
 const noteText = `---
 tags: [atlas, launch]
 status: active
@@ -86,6 +86,11 @@ for (const [c, f] of Object.entries({ 'config:get': () => cfg, 'config:set': (_,
   'voice:status': () => ({ installed: false, installing: false, percent: 0, sizeMb: 157 }), 'voice:install': () => ({ ok: true }), 'voice:remove': () => true, 'voice:transcribe': () => 'hello from the microphone',
   'setup:detect': () => ({ name: 'Sam', vaults: ['C:\\Users\\sam\\Documents\\Vault'], claudePath: '/home/sam/.local/bin/claude', wsl: true }),
   'setup:checkClaude': () => ({ ok: true, version: '2.1.0 (Claude Code)' }), 'vault:create': () => ({ ok: true }),
+  'daily:info': (_, o) => ({ pattern: (o && o.dailyNote) || '01 Daily/{YYYY}/{MM}/{YYYY}-{MM}-{DD}.md', template: (o && o.dailyTemplate) || 'Templates/daily.md', autoPattern: '01 Daily/{YYYY}/{MM}/{YYYY}-{MM}-{DD}.md', autoTemplate: 'Templates/daily.md', today: '01 Daily/2026/11/2026-11-14.md' }),
+  'vault:claude': () => ({ exists: true, workflows: [{ label: 'Start my day', prompt: 'Start my day', fill: '', desc: 'Create today’s daily note from the template and fill the plan from yesterday.' }, { label: 'Evening check-in', prompt: 'Evening check-in', fill: '', desc: 'Open today’s note. Ask one question at a time.' }, { label: 'Process today', prompt: 'Process today', fill: '', desc: 'Read every daily note since the last run.' }, { label: 'Weekly review', prompt: 'Weekly review', fill: '', desc: 'Read the past 7 daily notes.' }, { label: 'Triage inbox', prompt: 'Triage inbox', fill: '', desc: 'Sort notes in 00 Inbox/ into the right folder.' }, { label: 'What do I think about ___?', prompt: 'What do I think about ___?', fill: 'What do I think about ', desc: 'Search the whole vault for the topic.' }] }),
+  'vault:claudeCreate': () => true,
+  'vault:starter': () => ['01 Daily/_README.md', '04 Learned/_README.md', '.obsidian/daily-notes.json', '.obsidian/templates.json'],
+  'vault:starterApply': () => ({ ok: true, added: ['01 Daily/_README.md', '04 Learned/_README.md', '.obsidian/daily-notes.json', '.obsidian/templates.json'] }),
   'vault:move': (_, l) => ({ done: l.slice(0, 2), failed: l.slice(2).map((m) => ({ ...m, error: 'something is already there' })), edited: [{ rel: 'Home.md', id: 'x' }, { rel: 'Learning.md', id: 'y' }], deleted: [{ path: 'Scratch.md' }] }), 'vault:moveUndo': () => true, 'project:check': (_, p) => ({ ok: true, path: p }) }))
   ipcMain.handle(c, f);
 ipcMain.on('config:initial', (e) => { e.returnValue = { theme: THEME, textSize: 'regular' }; });
@@ -163,6 +168,28 @@ app.whenReady().then(async () => {
   await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.includes('Projects')).click()`); await wait(200);
   await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.startsWith('Atlas')).click()`); await wait(300);
   await js(`[...document.querySelectorAll('.tree-item')].find(b=>b.textContent.trim()==='Atlas launch plan').click()`); await wait(500); await snap('5-note');
+  await check('no stray text in the map', `[...document.getElementById('map-pane').childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent)`);
+  await js(`(()=>{const c=document.querySelector('#map-pane canvas'), r=c.getBoundingClientRect(); for (let y=r.top+40;y<r.bottom-40;y+=3) for (let x=r.left+40;x<r.right-40;x+=3) { c.dispatchEvent(new PointerEvent('pointermove',{clientX:x,clientY:y,bubbles:true})); if (c.classList.contains('pointing')) { window.__hov=[x,y]; return; } } })()`); await wait(200); await snap('5a-map-hover');
+  await check('note beside the map', `[!document.getElementById('map-pane').classList.contains('hidden'), document.getElementById('reader').classList.contains('side'), document.querySelector('.reader h1').textContent]`);
+  // the map's Show menu: Rook's changes, hidden notes, attachments, missing notes
+  await js(`S.cur = S.chats[0]; S.graphStale = true; paintPane()`); await wait(800);
+  await check('changes legend', `(document.querySelector('.map-legend')||{}).textContent`);
+  await js(`document.querySelector('.map-show').click()`); await wait(200);
+  await js(`[...document.querySelectorAll('.map-opt input')].slice(1).forEach(i=>{i.checked=true; i.dispatchEvent(new Event('change'))})`); await wait(900);
+  await js(`document.querySelector('.map-show').click()`); await wait(200); await snap('5c-map-show');
+  await check('map counts with attachments and missing', `S.map.counts`);
+  await check('no one-click hide buttons', `document.querySelectorAll('.tree-act, .reader-bar [aria-label*="Hide"]').length`);
+  await js(`{const r=[...document.querySelectorAll('.tree-row')].find(r=>r.textContent.trim()==='Atlas launch plan'); const b=r.getBoundingClientRect(); r.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:b.left+60,clientY:b.top+10}))}`); await wait(200); await snap('5c2-context');
+  await check('context menu', `[...document.querySelectorAll('.ctx-menu button')].map(b=>b.textContent)`);
+  await js(`[...document.querySelectorAll('.ctx-menu button')].pop().click()`); await wait(200); await snap('5c3-confirm');
+  notes.push('hidden before confirming: ' + JSON.stringify(cfg.hidden || []));
+  await js(`document.querySelector('.hide-modal .pill-accent').click()`); await wait(500);
+  notes.push('hidden after hiding: ' + JSON.stringify(cfg.hidden));
+  await snap('5d-hidden');
+  await js(`document.querySelector('.reader-bar button[aria-label="Read full width"]').click()`); await wait(400); await snap('5e-read');
+  await js(`document.querySelector('.reader-bar button[aria-label="Back to the map"]').click()`); await wait(400);
+  await js(`[...document.querySelectorAll('.note-hidden button')][0].click()`); await wait(300);
+  notes.push('hidden after Show again: ' + JSON.stringify(cfg.hidden));
   // ask about this note: ready-made questions, and the highlighted passage going along with the question
   await js(`[...document.querySelectorAll('.note-acts button')].find(b=>b.textContent==='Ask Rook about this').click()`); await wait(300); await snap('5b-note-ask');
   await check('note prompts', `popKind + ' | ' + [...document.querySelectorAll('.pop-chips .choice')].map(b=>b.textContent).join(', ')`);
@@ -215,7 +242,19 @@ app.whenReady().then(async () => {
   await js(`[...document.querySelectorAll('#set-notify .segmented button')].find(b=>b.textContent==='Off').click()`); await wait(200);
   notes.push('notify after switching off: ' + cfg.notify);
   await js(`document.getElementById('set-notify').scrollIntoView()`); await snap('10f-settings-notify');
+  await js(`document.getElementById('set-vault').scrollIntoView()`); await wait(300); await snap('10j-settings-vault');
+  await js(`[...document.querySelectorAll('#set-vault button')].find(b=>b.textContent.includes('Review and add')).click()`); await wait(300); await snap('10k-starter-review');
+  await check('starter review', `document.querySelector('.starter-list').textContent`);
+  await key({ key: 'Escape' }); await wait(200);
+  await js(`document.getElementById('set-instructions').scrollIntoView()`); await snap('10h-settings-instructions');
+  await js(`{const t=document.querySelector('[aria-label="Your instructions for Rook"]'); t.value='Reply in bullets.'; t.dispatchEvent(new Event('change'))}`); await wait(200);
+  notes.push('instructions saved: ' + JSON.stringify(cfg.instructions));
+  await js(`[...document.querySelectorAll('[aria-label="Delete notes"] button')].find(b=>b.textContent==='Off').click()`); await wait(200);
+  notes.push('deletes allowed after Off: ' + cfg.allowDeletes);
+  await js(`{const t=document.querySelector('[aria-label="Protected folders and notes"]'); t.value='Claude/\\n Journal/Private.md '; t.dispatchEvent(new Event('change'))}`); await wait(200);
+  notes.push('protected: ' + JSON.stringify(cfg.protect));
   await js(`document.getElementById('set-access').scrollIntoView()`); await snap('10g-settings-access');
+  await js(`document.getElementById('set-schedule').scrollIntoView()`); await snap('10i-settings-daily');
   await js(`document.getElementById('set-projects').scrollIntoView()`); await snap('10a-settings-projects');
   await js(`document.getElementById('set-voice').scrollIntoView()`); await snap('10b-settings-look');
   await js(`document.getElementById('set-keys').scrollIntoView()`); await snap('10c-settings-keys');

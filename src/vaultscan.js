@@ -133,4 +133,72 @@ function linkNotePath(from, target) {
   return `${dir}${parts.join('/')}.md`.slice(0, 240);
 }
 
-module.exports = { tasksIn, setTask, noteIndex, linksIn, isEmptyNote, health, linkNotePath, baseKey, inTemplates };
+// ---- the map: notes, plus what Obsidian also links to but is not a note -----------------
+// notes: [{ rel, text }], others: non-note files (rel paths). Every note is a node (kind 'note'). A link to an
+// attachment (![[cover.png]], [[plan.pdf]]) adds that file as kind 'file'; a link nothing answers adds kind 'missing'.
+// The page decides which kinds to show; edges are [i, j] index pairs, each pair once.
+function graph(notes, others = []) {
+  const resolve = noteIndex(notes);
+  const fileBy = new Map();
+  for (const rel of others) {
+    const r = rel.replace(/\\/g, '/'), k = r.toLowerCase();
+    fileBy.set(k, r);
+    const b = k.slice(k.lastIndexOf('/') + 1);
+    if (!fileBy.has(b) || r.length < fileBy.get(b).length) fileBy.set(b, r);
+  }
+  const nodes = notes.map((n) => {
+    const i = n.rel.lastIndexOf('/');
+    return { id: n.rel, title: n.rel.slice(i + 1).replace(/\.md$/i, ''), folder: i < 0 ? '' : n.rel.slice(0, i + 1), kind: 'note' };
+  });
+  const idx = new Map(nodes.map((d, i) => [d.id, i]));
+  const extra = (id, title, folder, kind) => { if (!idx.has(id)) { idx.set(id, nodes.length); nodes.push({ id, title, folder, kind }); } return idx.get(id); };
+  const seen = new Set(), edges = [];
+  notes.forEach((n, i) => {
+    if (n.text == null) return;
+    for (const { target } of linksIn(n.text)) {
+      const t = target.replace(/\\/g, '/').trim();
+      let j;
+      const note = resolve(t);
+      if (note) j = idx.get(note);
+      else {
+        const k = t.toLowerCase(), file = fileBy.get(k) || fileBy.get(k.slice(k.lastIndexOf('/') + 1));
+        if (file) { const s = file.lastIndexOf('/'); j = extra(file, file.slice(s + 1), s < 0 ? '' : file.slice(0, s + 1), 'file'); }
+        else if (/\.[a-z0-9]{2,5}$/i.test(t) && !/\.md$/i.test(t)) continue; // a missing attachment is the health check's business, not a ghost note
+        else { const name = t.slice(t.lastIndexOf('/') + 1).replace(/\.md$/i, ''); j = extra('missing:' + name.toLowerCase(), name, '', 'missing'); }
+      }
+      if (j === i || j == null) continue;
+      const key = i < j ? i + ':' + j : j + ':' + i;
+      if (!seen.has(key)) { seen.add(key); edges.push([i, j]); }
+    }
+  });
+  return { nodes, edges };
+}
+
+// ---- the user's workflows, from the vault's CLAUDE.md ----------------------------------
+// Under a "## Workflows" heading, each "### "Trigger" / "Other trigger"" heading is one workflow. Its label and the
+// prompt it sends are the first quoted phrase (or the heading itself); the description is the first line under it.
+// A phrase with a blank in it ("What do I think about ___?") is not sent at once: `fill` is what goes in the ask box.
+function workflowsIn(md) {
+  const lines = String(md).replace(/\r/g, '').split('\n');
+  const start = lines.findIndex((l) => /^##\s+workflows?\b/i.test(l));
+  if (start < 0) return [];
+  const out = [];
+  let cur = null;
+  for (let i = start + 1; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^##\s/.test(l)) break;
+    const hm = /^###\s+(.+)$/.exec(l);
+    if (hm) {
+      const quoted = [...hm[1].matchAll(/["“]([^"”]+)["”]/g)].map((m) => m[1].trim());
+      const label = (quoted[0] || hm[1].replace(/[*_`#]/g, '')).trim();
+      const gap = /_{2,}|…|\.\.\./.exec(label);
+      cur = { label, prompt: label, fill: gap ? label.slice(0, gap.index).trimEnd() + ' ' : '', desc: '' };
+      out.push(cur);
+    } else if (cur && !cur.desc && l.trim() && !/^```/.test(l.trim())) {
+      cur.desc = l.trim().replace(/^(\d+[.)]|[-*])\s+/, '').replace(/\[\[([^\]|]+)(\|[^\]]+)?\]\]/g, '$1').replace(/[*_`]/g, '').slice(0, 140);
+    }
+  }
+  return out.slice(0, 12);
+}
+
+module.exports = { tasksIn, setTask, noteIndex, linksIn, isEmptyNote, health, linkNotePath, baseKey, inTemplates, graph, workflowsIn };

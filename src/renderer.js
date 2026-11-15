@@ -91,10 +91,11 @@ async function openNote(nameOrFile) {
     S.noteCtx = true; S.noteSel = '';
     let acc = '';
     for (const part of S.note.folder.split('/').filter(Boolean)) { acc += part + '/'; S.treeOpen.add(acc); }
-    S.pane = 'note';
+    // A note opens beside the map (or in the full-width reader, if that is what is showing), and its dot is picked out.
+    if (S.pane !== 'note') S.pane = 'map';
     go('notes');
     $('reader').scrollTop = 0;
-    ensureGraph().then(() => { if (S.view === 'notes' && S.pane === 'note') paintReader(); });
+    ensureGraph().then(() => { if (S.view === 'notes' && S.pane !== 'health') paintReader(); if (S.map && S.map.selected() !== file) S.map.select(file, true); });
   } catch (e) { toast('That note could not be opened.', { error: true }); }
 }
 async function ensureGraph() {
@@ -108,7 +109,7 @@ function linkedNotes(file) {
   if (i < 0) return [];
   const out = [];
   for (const [a, b] of S.graph.edges) { if (a === i) out.push(S.graph.nodes[b]); else if (b === i) out.push(S.graph.nodes[a]); }
-  return out.sort((x, y) => x.title.localeCompare(y.title));
+  return out.filter((n) => (n.kind || 'note') === 'note').sort((x, y) => x.title.localeCompare(y.title));
 }
 
 // ---------- tool + event handling ----------
@@ -221,7 +222,7 @@ function send(text, opts = {}) {
   const files = takeAttachments();
   if (!text) text = files.length === 1 ? 'Here is a file.' : 'Here are some files.';
   S.plist = false; closePop();
-  const about = S.view === 'notes' && S.pane === 'note' && S.note && S.noteCtx ? S.note : null;
+  const about = noteShowing() && S.noteCtx ? S.note : null;
   if (!S.cur) {
     S.cur = { id: 'c' + Date.now(), title: text.length > 44 ? text.slice(0, 43) + '…' : text, when: Date.now(), pinned: false, sessionId: null, msgs: [] };
     S.chats.unshift(S.cur);
@@ -279,7 +280,11 @@ const chatPreview = (c) => (c.msgs.find((m) => m.role === 'user') || {}).text ||
 function paintHome() {
   const hr = new Date().getHours();
   const part = hr < 5 ? 'evening' : hr < 12 ? 'morning' : hr < 18 ? 'afternoon' : 'evening';
-  const quick = [
+  // The home actions are the user's own workflows from their vault's CLAUDE.md; Rook's four are only a starting point.
+  const flows = (S.claudeMd && S.claudeMd.workflows) || [];
+  const flowIcon = (t) => (/day|morning|today/i.test(t) ? 'pen' : /evening|check|night/i.test(t) ? 'chat' : /week|month|review|reflect/i.test(t) ? 'clock'
+    : /inbox|triage|sort|tidy/i.test(t) ? 'folder' : /think|find|search|what/i.test(t) ? 'search' : /process|update/i.test(t) ? 'refresh' : 'play');
+  const quick = flows.length ? flows.map((f) => [flowIcon(f.label), f.label.replace(/_{2,}/g, '…'), f.desc, f.fill || f.prompt, !f.fill]) : [
     ['pen', 'Add to today’s note', 'Append a line to today’s daily note.', 'Add to today’s note: '],
     ['search', 'Find a note', 'Search the vault for what you wrote about something.', 'Find my notes on '],
     ['align', 'Summarize a project', 'Gather what is still open in a project.', 'Summarize the project '],
@@ -289,8 +294,8 @@ function paintHome() {
   $('view-home').replaceChildren(
     h('section', { cls: 'hero' }, h('h1', { text: `Good ${part}, ${S.cfg.name}.` }),
       h('p', { text: `${num(S.noteCount)} notes in ${S.cfg.vaultName}. What should we work on?` })),
-    h('div', { cls: 'quick-grid' }, quick.map(([ic, t, d, fill]) =>
-      h('button', { type: 'button', cls: 'quick', onClick: () => { $('ask').value = fill; autogrow(); paintAsk(); focusAsk(); } },
+    h('div', { cls: 'quick-grid' + (flows.length ? ' flows' : '') }, quick.map(([ic, t, d, fill, go]) =>
+      h('button', { type: 'button', cls: 'quick', title: go ? `Send “${fill}”` : d, onClick: () => { if (go && !S.streaming) return send(fill); $('ask').value = fill; autogrow(); paintAsk(); focusAsk(); } },
         h('span', { cls: 'quick-icon' }, icon(ic, 'sm')), h('span', { cls: 'quick-title', text: t }), h('span', { cls: 'quick-desc', text: d })))),
     h('section', { cls: 'sec' }, ...historyNodes()));
 }
@@ -325,11 +330,14 @@ function toolGroupEl(tools) {
   d.append(h('div', { cls: 'tool-group-body' }, tools.map(toolEl)));
   return d;
 }
+const phase = (ms) => `animation-delay:-${Math.round(performance.now() % ms)}ms`;
 function botEl(m, isLast) {
   const writing = !m.done && !m.stopped;
   const running = m.blocks.some((b) => b.t === 'tool' && b.status === 'running');
   const art = h('article', { cls: 'msg-bot', 'aria-label': 'Rook replied', 'aria-live': writing ? 'polite' : 'off' });
-  if (writing) art.append(h('div', { cls: 'status', role: 'status' }, h('span', { cls: 'mini-vinyl', 'aria-hidden': 'true' }, h('span')), running ? 'Working' : 'Writing'));
+  // The chat is rebuilt on every streamed token; a negative delay tied to the clock keeps these animations
+  // running smoothly across rebuilds instead of restarting (and so looking frozen) each time.
+  if (writing) art.append(h('div', { cls: 'status', role: 'status' }, h('span', { cls: 'mini-vinyl', 'aria-hidden': 'true', style: phase(1600) }, h('span')), h('span', { cls: 'status-word', style: phase(1800), text: running ? 'Working' : 'Writing' })));
   let lastText = null;
   let group = null;
   for (const b of m.blocks) {
@@ -339,7 +347,8 @@ function botEl(m, isLast) {
     else if (b.t === 'chips') art.append(h('div', { cls: 'chips' }, b.items.map((c) => h('span', { cls: 'chip-wrap' + (c.reverted ? ' reverted' : '') },
       h('button', { type: 'button', cls: 'chip', 'aria-label': `${c.verb} ${c.path}, open note`, onClick: () => openNote(c.path) },
         h('span', { cls: 'chip-verb', text: c.reverted ? 'Undone' : c.verb }), h('span', { cls: 'chip-path', text: c.path }), h('span', { cls: 'chip-diff', text: c.diff })),
-      c.id ? h('button', { type: 'button', cls: 'chip chip-act', 'aria-label': `See what changed in ${c.path}`, title: 'See what changed, or undo it', onClick: () => openChanges(c) }, icon('undo', 'sm'), 'Changes') : null))));
+      c.id ? h('button', { type: 'button', cls: 'chip chip-act', 'aria-label': `See what changed in ${c.path}`, title: 'See what changed, or undo it', onClick: () => openChanges(c) }, icon('undo', 'sm'), 'Changes') : null)),
+      b.items.some((c) => !c.reverted && /\.md$/i.test(c.path)) ? h('button', { type: 'button', cls: 'chip chip-map', title: 'See these notes on the map, ringed', onClick: () => showChangesOnMap(b.items.filter((c) => !c.reverted).map((c) => c.path)) }, icon('graph', 'sm'), 'Show on map') : null));
     else if (b.t === 'moves') art.append(movesEl(b));
     else if (b.t === 'blocked') art.append(h('div', { cls: 'blocked', role: 'note' }, h('span', { cls: 'blocked-icon' }, icon('lock', 'sm')),
       h('div', { cls: 'blocked-body' }, h('span', { cls: 'eyebrow', text: 'Read-only · outside the vault' }),
@@ -348,7 +357,7 @@ function botEl(m, isLast) {
         S.streaming ? null : pill('pill-ghost', 'Write to vault instead', () => send('Write that to a new note inside the vault instead.')))));
   }
   if (group) art.append(toolGroupEl(group));
-  if (writing && lastText && lastBlock(m).t === 'text') (lastText.lastElementChild || lastText).append(h('span', { cls: 'caret', 'aria-hidden': 'true' }));
+  if (writing && lastText && lastBlock(m).t === 'text') (lastText.lastElementChild || lastText).append(h('span', { cls: 'caret', 'aria-hidden': 'true', style: phase(1100) }));
   if (m.stopped) art.append(h('p', { cls: 'stopped', text: 'Stopped' }));
   if (m.error) art.append(h('p', { cls: 'error-line', role: 'alert' }, icon('alert', 'sm'), m.error.slice(0, 300), isLast ? pill('pill-ghost', 'Retry', retry) : null));
   // A question that ended with options: show them as buttons under the latest reply.
@@ -390,7 +399,9 @@ function paintChat() {
 // ---------- NOTES ----------
 function buildTree() {
   const root = { folders: new Map(), notes: [], count: 0 };
+  const showHidden = mapShow().hidden;
   for (const n of S.all) {
+    if (!showHidden && isHidden(n.file)) continue;
     const parts = n.file.split('/'); let cur = root; root.count++;
     for (let i = 0; i < parts.length - 1; i++) {
       if (!cur.folders.has(parts[i])) cur.folders.set(parts[i], { folders: new Map(), notes: [], count: 0, path: parts.slice(0, i + 1).join('/') + '/' });
@@ -406,22 +417,25 @@ function paintTree() {
     inp.addEventListener('input', () => { S.treeFilter = inp.value; paintTree(); });
     $('tree-tools').append(h('label', { cls: 'filter' }, icon('search', 'sm'), inp), h('div', { id: 'pane-seg' }));
   }
-  $('pane-seg').replaceChildren(seg([['note', 'Note'], ['map', 'Map'], ['health', 'Health']], S.pane, (v) => { S.pane = v; paintTree(); paintPane(); }, 'Show'));
-  const noteItem = (n, depth) => h('button', { type: 'button', cls: 'tree-item' + (S.note?.file === n.file ? ' on' : ''), style: `padding-left:${8 + depth * 16}px`, title: n.file, onClick: () => openNote(n.file) },
-    icon('file', 'sm'), h('span', { text: n.title }));
+  $('pane-seg').replaceChildren(seg([['map', 'Map'], ['note', 'Read'], ['health', 'Health']], S.pane, (v) => { S.pane = v; paintTree(); paintPane(); }, 'Show'));
+  const showHidden = mapShow().hidden;
+  const noteItem = (n, depth) => h('div', { cls: 'tree-row' + (isHidden(n.file) ? ' is-hidden' : ''), onContextmenu: (e) => noteMenu(e, n.file, n.title) },
+    h('button', { type: 'button', cls: 'tree-item' + (S.note?.file === n.file ? ' on' : ''), style: `padding-left:${8 + depth * 16}px`, title: n.file, onClick: () => openNote(n.file) },
+      icon('file', 'sm'), h('span', { text: n.title }), changedSet().has(n.file) ? h('i', { cls: 'tree-dot', title: 'Changed by Rook' }) : null));
   const out = [];
   const q = S.treeFilter.trim().toLowerCase();
   if (q) {
-    const hits = S.all.filter((n) => n.file.toLowerCase().includes(q)).slice(0, 200);
+    const hits = S.all.filter((n) => n.file.toLowerCase().includes(q) && (showHidden || !isHidden(n.file))).slice(0, 200);
     hits.forEach((n) => out.push(noteItem(n, 0)));
     if (!hits.length) out.push(h('p', { cls: 'empty', text: 'No notes match.' }));
   } else {
     const walk = (node, depth) => {
       [...node.folders.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' })).forEach(([name, f]) => {
         const open = S.treeOpen.has(f.path);
-        out.push(h('button', { type: 'button', cls: 'tree-item tree-folder' + (open ? ' open' : ''), style: `padding-left:${8 + depth * 16}px`, 'aria-expanded': String(open),
-          onClick: () => { open ? S.treeOpen.delete(f.path) : S.treeOpen.add(f.path); paintTree(); } },
-          icon('chevron', 'sm chev'), h('span', { text: name }), h('small', { text: String(f.count) })));
+        out.push(h('div', { cls: 'tree-row' + (isHidden(f.path) ? ' is-hidden' : ''), onContextmenu: (e) => folderMenu(e, f.path, name) },
+          h('button', { type: 'button', cls: 'tree-item tree-folder' + (open ? ' open' : ''), style: `padding-left:${8 + depth * 16}px`, 'aria-expanded': String(open),
+            onClick: () => { open ? S.treeOpen.delete(f.path) : S.treeOpen.add(f.path); paintTree(); } },
+            icon('chevron', 'sm chev'), h('span', { text: name }), h('small', { text: String(f.count) }))));
         if (open) walk(f, depth + 1);
       });
       node.notes.forEach((n) => out.push(noteItem(n, depth)));
@@ -450,13 +464,20 @@ function paintReader() {
   const first = body.querySelector(':scope > h1');
   if (first && first.textContent.trim().toLowerCase() === n.title.toLowerCase()) first.remove(); // the header already shows the title
   const top = $('reader').scrollTop;
+  const side = S.pane === 'map';
+  const hid = isHidden(n.file);
   $('reader').replaceChildren(h('div', { cls: 'reader-inner' },
+    h('div', { cls: 'reader-bar' },
+      side ? tool('expand', 'Read full width', () => { S.pane = 'note'; paintTree(); paintPane(); }) : tool('graph', 'Back to the map', () => { S.pane = 'map'; paintTree(); paintPane(); }),
+      side ? tool('x', 'Close the note', () => { S.note = null; if (S.map) S.map.select(null, true); paintTree(); paintPane(); }) : null),
     h('header', { cls: 'note-head' },
       h('span', { cls: 'eyebrow mono', text: n.folder || 'Vault' }), h('h1', { text: n.title }), h('span', { cls: 'note-meta', text: meta.join(' · ') }),
       h('div', { cls: 'note-acts' },
         pill('pill pill-accent', 'Ask Rook about this', openNotePop, 'chat'),
         pill('pill pill-outline', 'Open in Obsidian', () => VA.openNote(n.file), 'external'),
-        pill('pill pill-outline', 'Show on map', () => showOnMap(n.file), 'graph'))),
+        side ? null : pill('pill pill-outline', 'Show on map', () => showOnMap(n.file), 'graph'))),
+    hid ? h('div', { cls: 'note-hidden' }, h('span', { text: 'Hidden from your notes list and the map. Rook can still read it.' }),
+      pill('pill-ghost', 'Show again', () => setHidden(hiddenBy(n.file), false))) : null,
     body,
     linked && linked.length ? h('section', { cls: 'backlinks' }, h('h2', { text: 'Linked notes' }),
       h('div', { cls: 'rows' }, linked.map((l) => row('link', l.title, l.folder || 'Vault', '', () => openNote(l.id))))) : null));
@@ -465,38 +486,196 @@ function paintReader() {
 
 // ---------- MAP (the other face of the Notes page) ----------
 function paintPane() {
-  $('reader').classList.toggle('hidden', S.pane !== 'note');
+  const side = S.pane === 'map' && !!S.note;
+  $('view-notes').classList.toggle('with-side', side);
+  $('reader').classList.toggle('hidden', !(S.pane === 'note' || side));
+  $('reader').classList.toggle('side', side);
   $('map-pane').classList.toggle('hidden', S.pane !== 'map');
   $('health-pane').classList.toggle('hidden', S.pane !== 'health');
-  if (S.pane === 'note') paintReader(); else if (S.pane === 'map') paintMap(); else paintHealth();
+  if (S.pane === 'note' || side) paintReader();
+  if (S.pane === 'map') paintMap(); else if (S.pane === 'health') paintHealth();
   paintAsk();
+}
+const noteShowing = () => S.view === 'notes' && S.note && (S.pane === 'note' || S.pane === 'map');
+
+// ---------- hidden notes ----------
+// The user can hide notes and folders from the notes list and the map. Rook (the agent) still sees them; this is tidying, not privacy.
+const mapShow = () => ({ hidden: false, files: false, missing: false, changes: true, ...((S.cfg && S.cfg.mapShow) || {}) });
+const isHidden = (file) => ((S.cfg && S.cfg.hidden) || []).some((x) => (x.endsWith('/') ? file.startsWith(x) : x === file));
+function setHidden(path, on, quiet) {
+  const list = (S.cfg.hidden || []).filter((x) => x !== path);
+  if (on) list.push(path);
+  S.cfg = { ...S.cfg, hidden: list };
+  VA.setConfig(S.cfg);
+  S.graphStale = true;
+  if (S.view === 'notes') { paintTree(); paintPane(); }
+  if (!quiet) toast(on ? `${path.endsWith('/') ? 'Folder' : 'Note'} hidden.${mapShow().hidden ? '' : ' Turn on Hidden notes in the map’s Show menu to see it.'}` : 'Shown again.',
+    { action: 'Undo', onAction: () => setHidden(path, !on, true) });
+}
+// The list of files the starting layout would add, grouped by folder, with one button to add them all.
+function reviewStarter(missing, after) {
+  const groups = new Map();
+  for (const r of missing) { const i = r.lastIndexOf('/'), k = i < 0 ? 'Vault' : r.slice(0, i); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r.slice(i + 1)); }
+  const add = async () => {
+    const r = await VA.starter.apply();
+    closeModal();
+    if (!r.ok) return toast(r.reason, { error: true });
+    S.cfg = await VA.getConfig(); S.graphStale = true; await loadNotes();
+    toast(r.added.length ? `Added ${r.added.length} file${r.added.length === 1 ? '' : 's'}. Open CLAUDE.md to make it yours.` : 'Everything was already there.', r.added.includes('CLAUDE.md') ? { action: 'Open', onAction: () => VA.openNote('CLAUDE.md') } : {});
+    after && after();
+  };
+  openModal(h('div', { cls: 'hide-body' },
+    h('h2', { text: `Add ${missing.length} file${missing.length === 1 ? '' : 's'} to your vault?` }),
+    h('p', { cls: 'pop-text', text: 'Only these are added; nothing that is already in your vault is changed or moved.' }),
+    h('div', { cls: 'starter-list' }, [...groups].map(([k, names]) => h('div', null, h('span', { cls: 'eyebrow mono', text: k }), h('span', { cls: 'mono', text: names.join(' · ') })))),
+    h('div', { cls: 'pop-acts' }, pill('pill-ghost', 'Cancel', closeModal), pill('pill pill-accent', 'Add them', add))), { cls: 'hide-modal', label: 'Add Rook’s layout' });
+}
+// Hiding is deliberate: only from the right-click menu on a note or folder (list or map), never a one-click button.
+const hiddenBy = (file) => (S.cfg.hidden || []).find((x) => (x.endsWith('/') ? file.startsWith(x) : x === file));
+function noteMenu(e, file, title) {
+  const by = hiddenBy(file);
+  ctxMenu(e, [
+    ['Open', () => openNote(file)],
+    ['Show on map', () => showOnMap(file)],
+    ['Open in Obsidian', () => VA.openNote(file)],
+    null,
+    by ? [by === file ? 'Show again' : `Show the ${by} folder again`, () => setHidden(by, false)] : [`Hide “${title}”…`, () => confirmHide(file, title)]
+  ]);
+}
+function folderMenu(e, path, name) {
+  const by = hiddenBy(path);
+  ctxMenu(e, [by ? [by === path ? 'Show this folder again' : `Show the ${by} folder again`, () => setHidden(by, false)] : [`Hide the “${name}” folder…`, () => confirmHide(path, name)]]);
+}
+// One more step, so a note is never hidden by a slip of the mouse.
+function confirmHide(path, name) {
+  const folder = path.endsWith('/');
+  openModal(h('div', { cls: 'hide-body' },
+    h('h2', { text: folder ? `Hide the “${name}” folder?` : `Hide “${name}”?` }),
+    h('p', { cls: 'pop-text', text: (folder ? 'Its notes leave' : 'It leaves') + ' your notes list and the map. Nothing is deleted, and Rook can still read ' + (folder ? 'them' : 'it') + '. Bring it back from the map’s Show menu.' }),
+    h('div', { cls: 'pop-acts' }, pill('pill-ghost', 'Cancel', closeModal), pill('pill pill-accent', 'Hide', () => { closeModal(); setHidden(path, true); }))),
+  { cls: 'hide-modal', label: 'Hide' });
+  setTimeout(() => { const b = document.querySelector('.hide-modal .pill-accent'); if (b) b.focus(); }, 0);
+}
+let ctxEl = null;
+function closeCtx() { if (ctxEl) { ctxEl.remove(); ctxEl = null; } }
+function ctxMenu(e, items) {
+  e.preventDefault(); closeCtx();
+  ctxEl = h('div', { cls: 'ctx-menu', role: 'menu' }, items.map((it) => (it ? h('button', { type: 'button', role: 'menuitem', cls: /^Hide/.test(it[0]) ? 'danger' : '', onClick: () => { closeCtx(); it[1](); } }, it[0]) : h('hr'))));
+  document.body.append(ctxEl);
+  const r = ctxEl.getBoundingClientRect();
+  ctxEl.style.left = Math.min(e.clientX, innerWidth - r.width - 8) + 'px';
+  ctxEl.style.top = Math.min(e.clientY, innerHeight - r.height - 8) + 'px';
+  ctxEl.querySelector('button').focus();
+}
+document.addEventListener('mousedown', (e) => { if (ctxEl && !ctxEl.contains(e.target)) closeCtx(); }, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ctxEl) { e.stopPropagation(); closeCtx(); } }, true);
+window.addEventListener('blur', closeCtx);
+async function setMapShow(patch) {
+  S.cfg = { ...S.cfg, mapShow: { ...mapShow(), ...patch } }; // at once, so quick clicks build on each other
+  VA.setConfig(S.cfg);
+  S.graphStale = true; paintTree(); paintPane();
+}
+
+// ---------- Rook's changes ----------
+// What Rook created, edited or moved, read from the saved chats: the open chat's changes, or else the last week's.
+function rookChanges() {
+  const out = new Map();
+  const chats = S.cur && S.cur.msgs.length ? [S.cur] : S.chats.filter((c) => Date.now() - c.when < 7 * 86400e3).sort((a, b) => a.when - b.when);
+  for (const c of chats) for (const m of c.msgs) {
+    if (m.role !== 'bot') continue;
+    for (const b of m.blocks || []) {
+      if (b.t === 'chips') for (const it of b.items) { if (!it.reverted && /\.md$/i.test(it.path)) out.set(it.path.replace(/\\/g, '/'), { verb: it.verb, chat: c }); }
+      if (b.t === 'moves' && !b.undone) for (const mv of b.done || []) if (mv.to) out.set(mv.to, { verb: 'Moved', chat: c });
+    }
+  }
+  return out;
+}
+const changedSet = () => (mapShow().changes ? rookChanges() : new Map());
+const changesFrom = () => (S.cur && S.cur.msgs.length ? 'this chat' : 'the last 7 days');
+
+// ---------- MAP (the main face of the Notes page; the open note sits beside it) ----------
+function mapData() {
+  const g = S.graph, show = mapShow();
+  const keep = g.nodes.map((n) => {
+    const kind = n.kind || 'note';
+    if (kind === 'file') return show.files;
+    if (kind === 'missing') return show.missing;
+    return show.hidden || !isHidden(n.id);
+  });
+  const at = new Map(); const nodes = [];
+  g.nodes.forEach((n, i) => { if (keep[i]) { at.set(i, nodes.length); nodes.push({ ...n, hidden: (n.kind || 'note') === 'note' && isHidden(n.id) }); } });
+  const edges = g.edges.filter(([a, b]) => at.has(a) && at.has(b)).map(([a, b]) => [at.get(a), at.get(b)]);
+  return { nodes, edges };
+}
+function showMenu(host) {
+  const show = mapShow(), hiddenList = S.cfg.hidden || [];
+  const counts = { files: 0, missing: 0 };
+  for (const n of S.graph.nodes) if (n.kind in counts) counts[n.kind]++;
+  const box = (key, label, sub) => {
+    const inp = h('input', { type: 'checkbox' }); inp.checked = !!show[key];
+    inp.addEventListener('change', () => setMapShow({ [key]: inp.checked }));
+    return h('label', { cls: 'map-opt' }, inp, h('span', null, h('b', { text: label }), h('small', { text: sub })));
+  };
+  const ch = rookChanges().size;
+  host.replaceChildren(h('div', { cls: 'map-menu', role: 'dialog', 'aria-label': 'What the map shows' },
+    box('changes', 'Rook’s changes', `${ch} note${ch === 1 ? '' : 's'} from ${changesFrom()}, ringed`),
+    box('hidden', 'Hidden notes', hiddenList.length ? `${hiddenList.length} hidden, drawn faintly` : 'None hidden yet'),
+    box('files', 'Attachments', `${counts.files} linked image${counts.files === 1 ? '' : 's'} and files, as squares`),
+    box('missing', 'Missing notes', `${counts.missing} link${counts.missing === 1 ? '' : 's'} to notes that don’t exist yet, as rings`),
+    hiddenList.length ? h('div', { cls: 'map-hidden' }, h('span', { cls: 'eyebrow', text: 'Hidden' }),
+      hiddenList.map((x) => h('div', { cls: 'map-hidden-row' }, h('span', { cls: 'mono', text: x }), pill('pill-ghost', 'Show', () => setHidden(x, false))))) : null));
 }
 async function paintMap() {
   const host = $('map-pane');
-  if (S.map && !S.graphStale) return;
-  const data = await ensureGraph();
+  if (S.map && !S.graphStale) { S.map.setChanged(changedSet()); S.map.wake(); return; }
+  await ensureGraph();
   if (S.view !== 'notes' || S.pane !== 'map') return;
+  const data = mapData();
+  // Rebuilding (new notes, a theme change, a Show option) keeps the dots where they were and the view where it was.
+  const keep = S.map ? { positions: S.map.positions(), view: S.map.view() } : {};
   if (S.map) { S.map.destroy(); S.map = null; }
-  S.mapSel = null;
   if (!data.nodes.length) { host.replaceChildren(h('div', { cls: 'map-empty' }, h('h2', { text: 'Nothing to map yet' }), h('p', { text: 'Notes appear here as dots; [[links]] between them appear as lines.' }))); return; }
   const canvas = h('canvas', { 'aria-label': 'Map of linked notes', role: 'img' });
-  const filter = h('input', { type: 'search', placeholder: 'Highlight notes', 'aria-label': 'Highlight notes on the map', autocomplete: 'off', spellcheck: 'false' });
+  const filter = h('input', { type: 'search', placeholder: 'Highlight notes', 'aria-label': 'Highlight notes on the map', autocomplete: 'off', spellcheck: 'false', value: S.mapFilter });
+  const menu = h('div', { cls: 'map-menu-slot' });
+  const changes = changedSet();
+  const notes = data.nodes.filter((d) => (d.kind || 'note') === 'note').length;
+  const showBtn = pill('pill-ghost map-show', 'Show', () => { if (menu.firstChild) menu.replaceChildren(); else showMenu(menu); }, 'eye');
   const card = h('div');
-  host.replaceChildren(canvas,
-    h('div', { cls: 'map-top' }, h('label', { cls: 'filter' }, icon('search', 'sm'), filter),
-      h('span', { cls: 'map-count', text: `${num(data.nodes.length)} notes · ${num(data.edges.length)} links` })),
+  host.replaceChildren(...[canvas,
+    h('div', { cls: 'map-top' }, h('label', { cls: 'filter' }, icon('search', 'sm'), filter), showBtn,
+      h('span', { cls: 'map-count', text: `${num(notes)} notes · ${num(data.edges.length)} links` })),
+    changes.size ? h('button', { type: 'button', cls: 'map-legend', title: `Notes Rook changed in ${changesFrom()}`, onClick: () => cycleChange() },
+      h('i', { cls: 'ring' }), `${changes.size} changed by Rook in ${changesFrom()}`) : null,
+    menu,
     h('div', { cls: 'map-zoom' }, tool('plus', 'Zoom in', () => S.map.zoom(1.3)), tool('minus', 'Zoom out', () => S.map.zoom(1 / 1.3)), tool('fit', 'Fit the whole map', () => S.map.fit())),
-    card);
-  const paintCard = (sel) => {
+    card].filter(Boolean)); // replaceChildren would write a skipped (null) part as the text "null"
+  // Notes open beside the map; attachments and missing notes get a small card instead.
+  const onSelect = (sel) => {
     S.mapSel = sel;
-    card.replaceChildren(...(sel ? [h('div', { cls: 'map-card' }, h('span', { cls: 'eyebrow mono', text: sel.folder || 'Vault' }), h('h3', { text: sel.title }),
-      h('span', { cls: 'note-meta', text: `${sel.links} linked note${sel.links === 1 ? '' : 's'}` }),
-      h('div', { cls: 'note-acts' }, pill('pill-ghost', 'Open note', () => openNote(sel.id), 'file'), pill('pill-ghost', 'Obsidian', () => VA.openNote(sel.id), 'external')))] : []));
+    card.replaceChildren();
+    if (!sel) return;
+    if (sel.kind === 'note') { if (S.note?.file !== sel.id) openNote(sel.id); return; }
+    card.append(h('div', { cls: 'map-card' }, h('span', { cls: 'eyebrow mono', text: sel.kind === 'file' ? 'Attachment · ' + (sel.folder || 'Vault') : 'Missing note' }), h('h3', { text: sel.title }),
+      h('span', { cls: 'note-meta', text: sel.kind === 'file' ? `Linked from ${sel.links} note${sel.links === 1 ? '' : 's'}` : `${sel.links} note${sel.links === 1 ? '' : 's'} link here, but there is no such note yet` }),
+      sel.kind === 'missing' ? h('div', { cls: 'note-acts' }, pill('pill-ghost', 'See it in Health', () => { S.pane = 'health'; paintTree(); paintPane(); }, 'alert')) : null));
   };
-  S.map = window.RookGraph.create(canvas, data, { onSelect: paintCard, onOpen: (id) => openNote(id) });
-  filter.addEventListener('input', () => S.map.setFilter(filter.value));
+  const onContext = (e, d) => { if (d.kind === 'note') noteMenu(e, d.id, d.title); };
+  S.map = window.RookGraph.create(canvas, data, { onSelect, onContext, onOpen: (id) => { if (!id.startsWith('missing:') && /\.md$/i.test(id)) { S.pane = 'note'; openNote(id); } }, changed: changes, ...keep });
+  if (S.mapFilter) S.map.setFilter(S.mapFilter);
+  filter.addEventListener('input', () => { S.mapFilter = filter.value; S.map.setFilter(filter.value); });
+  if (S.note) S.map.select(S.note.file, true);
 }
-async function showOnMap(file) { S.pane = 'map'; go('notes'); await paintMap(); if (S.map) S.map.select(file); }
+// The legend steps through the changed notes, one per click.
+function cycleChange() {
+  const ids = [...changedSet().keys()].filter((id) => S.all.some((n) => n.file === id));
+  if (!ids.length) return;
+  const i = (ids.indexOf(S.note?.file) + 1) % ids.length;
+  openNote(ids[i]);
+}
+async function showOnMap(file) { S.pane = 'map'; if (file && file !== S.note?.file) await openNote(file); else go('notes'); await paintMap(); if (S.map && file) S.map.select(file); }
+// A reply's changes, on the map: opens the first and rings them all.
+function showChangesOnMap(files) { const f = files.find((x) => /\.md$/i.test(x)); showOnMap(f || null); }
 
 // ---------- CHAT LIST (on the Chat home page) ----------
 function seg(opts, value, onPick, label) {
@@ -576,7 +755,8 @@ async function paintSettings() {
   const lookHost = h('div', { cls: 'sp-stack' });
   const paintLook = () => lookHost.replaceChildren(
     h('div', { cls: 'sp-line' }, h('span', { text: 'Theme' }), seg([['dark', 'Dark'], ['light', 'Light'], ['system', 'Match Windows']], S.cfg.theme || 'dark', async (v) => { await save({ theme: v }, null); applyTheme(); paintLook(); }, 'Theme')),
-    h('div', { cls: 'sp-line' }, h('span', { text: 'Text size' }), seg([['small', 'Small'], ['regular', 'Regular'], ['large', 'Large']], S.cfg.textSize || 'regular', async (v) => { await save({ textSize: v }, null); applyTheme(); paintLook(); }, 'Text size')));
+    h('div', { cls: 'sp-line' }, h('span', { text: 'Text size' }), seg([['small', 'Small'], ['regular', 'Regular'], ['large', 'Large']], S.cfg.textSize || 'regular', async (v) => { await save({ textSize: v }, null); applyTheme(); paintLook(); }, 'Text size')),
+    h('div', { cls: 'sp-line' }, h('span', { text: 'Animations' }), seg([['on', 'On'], ['system', 'Match Windows'], ['off', 'Off']], S.cfg.motion || 'on', async (v) => { await save({ motion: v }, null); applyTheme(); paintLook(); }, 'Animations')));
   paintLook();
 
   // Projects: folders Rook knows by name
@@ -630,7 +810,7 @@ async function paintSettings() {
     });
     schedHost.replaceChildren(
       h('div', { cls: 'sp-line' }, h('span', { text: 'Daily note on' }), dayBtns),
-      h('p', { cls: 'sp-help', text: sc.dailyDays.length ? 'On these days Rook creates the day’s note in Daily/ (from Templates/daily.md if there is one).' : 'No days picked, so no daily notes are created.' }),
+      h('p', { cls: 'sp-help', text: sc.dailyDays.length ? 'On these days Rook creates the day’s note in the place set above, from the template when there is one.' : 'No days picked, so no daily notes are created.' }),
       h('div', { cls: 'sp-line' }, h('span', { text: 'Weekly review' }), h('div', { cls: 'sp-row' }, daySel, hourSel)),
       h('p', { cls: 'sp-help', text: sc.weeklyDay < 0 ? 'Off.' : 'Rook reads the week’s notes and writes a review into the vault. If the PC is off at that time, it is written the next time Rook is running that week.' }),
       h('div', { cls: 'sp-line' }, h('span', { cls: 'sp-help', text: 'Scheduled notes need Rook running; it can sit in the tray.' }), runNow));
@@ -716,7 +896,59 @@ async function paintSettings() {
   };
   const paintKeys = () => keysHost.replaceChildren(shortcutRows(setKeys));
   paintKeys();
-  const secs = [['set-vault', 'Vault'], ['set-access', 'Access'], ['set-assistant', 'Assistant'], ['set-projects', 'Projects'], ['set-schedule', 'Scheduled notes'], ['set-notify', 'Notifications'], ['set-voice', 'Voice'], ['set-look', 'Appearance'], ['set-startup', 'Startup'], ['set-keys', 'Keyboard shortcuts'], ['set-about', 'About']];
+  // The user's own instructions: Rook adds them to every run, next to the vault's CLAUDE.md.
+  const instr = h('textarea', { cls: 'sp-input sp-area', rows: '6', 'aria-label': 'Your instructions for Rook', spellcheck: 'true',
+    placeholder: 'Anything you want Rook to always do or never do. For example: Reply in two or three bullets. Ask before changing anything in Claude/. Call me by my first name.' });
+  instr.value = cfg.instructions || '';
+  instr.addEventListener('change', () => save({ instructions: instr.value.trim() }, 'Instructions saved. They apply from the next message.'));
+  const claudeHost = h('div', { cls: 'sp-stack' });
+  const paintClaude = async () => {
+    const c = await VA.claudeMd.get().catch(() => ({ exists: false, workflows: [] }));
+    S.claudeMd = c;
+    claudeHost.replaceChildren(
+      h('div', { cls: 'sp-line' }, h('span', { text: c.exists ? `CLAUDE.md in your vault · ${c.workflows.length} workflow${c.workflows.length === 1 ? '' : 's'}` : 'Your vault has no CLAUDE.md yet' }),
+        c.exists ? pill('pill-ghost', 'Open in Obsidian', () => VA.openNote('CLAUDE.md'), 'external')
+          : pill('pill-ghost', 'Create one', async () => { await VA.claudeMd.create(); await paintClaude(); VA.openNote('CLAUDE.md'); }, 'filePlus')),
+      h('p', { cls: 'sp-help', text: 'Rook reads it on every run and follows it: tone, workflows, where notes go, what to ask first. Each ### "Trigger" heading under ## Workflows becomes a button on the home page.' }),
+      c.workflows.length ? h('div', { cls: 'flow-chips' }, c.workflows.map((w) => h('span', { cls: 'flow-chip', title: w.desc, text: w.label.replace(/_{2,}/g, '…') }))) : null);
+  };
+  paintClaude();
+  // Limits the user sets on what Rook may change, on top of the fixed vault-only rule.
+  const limitHost = h('div', { cls: 'sp-stack' });
+  const paintLimits = () => limitHost.replaceChildren(
+    h('div', { cls: 'sp-line' }, h('span', { text: 'Move and rename notes' }), seg([['on', 'Allowed'], ['off', 'Off']], S.cfg.allowMoves === false ? 'off' : 'on', async (v) => { await save({ allowMoves: v === 'on' }); paintLimits(); }, 'Move and rename notes')),
+    h('div', { cls: 'sp-line' }, h('span', { text: 'Delete notes' }), seg([['on', 'Allowed'], ['off', 'Off']], S.cfg.allowDeletes === false ? 'off' : 'on', async (v) => { await save({ allowDeletes: v === 'on' }); paintLimits(); }, 'Delete notes')),
+    h('p', { cls: 'sp-help', text: 'Deleted notes go to the Recycle Bin, and moves can be undone from the chat.' }));
+  paintLimits();
+  const protect = h('textarea', { cls: 'sp-input sp-area mono', rows: '3', 'aria-label': 'Protected folders and notes', spellcheck: 'false', placeholder: 'One per line, e.g.\nClaude\nJournal/Private.md' });
+  protect.value = (cfg.protect || []).join('\n');
+  protect.addEventListener('change', () => save({ protect: protect.value.split('\n').map((x) => x.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')).filter(Boolean) }, 'Protected list saved.'));
+  // Daily notes: where they go and what they start from; blank follows what the vault already does.
+  const dailyPat = h('input', { cls: 'sp-input mono', 'aria-label': 'Daily note location', spellcheck: 'false', value: cfg.dailyNote || '' });
+  const dailyTpl = h('input', { cls: 'sp-input mono', 'aria-label': 'Daily note template', spellcheck: 'false', value: cfg.dailyTemplate || '' });
+  const dailyHelp = h('p', { cls: 'sp-help' });
+  const paintDaily = async () => {
+    const d = await VA.daily({ dailyNote: dailyPat.value.trim(), dailyTemplate: dailyTpl.value.trim() }).catch(() => null);
+    if (!d) return;
+    dailyPat.placeholder = d.autoPattern; dailyTpl.placeholder = d.autoTemplate || 'No template found';
+    dailyHelp.textContent = `Today’s note: ${d.today}${d.template ? `, from ${d.template}` : ''}. Leave a box empty to follow your vault (found: ${d.autoPattern}). {YYYY}, {MM} and {DD} stand for the date.`;
+  };
+  for (const [inp, key] of [[dailyPat, 'dailyNote'], [dailyTpl, 'dailyTemplate']]) {
+    inp.addEventListener('input', paintDaily);
+    inp.addEventListener('change', () => save({ [key]: inp.value.trim() }, 'Daily notes saved.'));
+  }
+  paintDaily();
+  // Rook's starting layout for the vault: shows exactly what would be added, and adds only what is missing.
+  const layoutHost = h('div', { cls: 'sp-stack' });
+  const paintLayout = async () => {
+    const missing = await VA.starter.plan().catch(() => []);
+    layoutHost.replaceChildren(
+      h('div', { cls: 'sp-line' }, h('span', { text: missing.length ? `Folders and templates · ${missing.length} to add` : 'Folders and templates · all in place' }),
+        missing.length ? pill('pill-ghost', 'Review and add', () => reviewStarter(missing, paintLayout), 'filePlus') : null),
+      h('p', { cls: 'sp-help', text: 'Rook’s layout: numbered folders from 00 Inbox to 10 Archive, Daily, Weekly, Project, Person and Learned templates, Rook’s memory in Claude/, a CLAUDE.md with ground rules and workflows, and Obsidian’s daily-notes settings to match. Nothing you already have is changed.' }));
+  };
+  paintLayout();
+  const secs = [['set-vault', 'Vault'], ['set-instructions', 'Instructions'], ['set-access', 'Access'], ['set-assistant', 'Assistant'], ['set-projects', 'Projects'], ['set-schedule', 'Scheduled notes'], ['set-notify', 'Notifications'], ['set-voice', 'Voice'], ['set-look', 'Appearance'], ['set-startup', 'Startup'], ['set-keys', 'Keyboard shortcuts'], ['set-about', 'About']];
   const nav = h('nav', { cls: 'settings-nav', 'aria-label': 'Settings categories' }, secs.map(([id, l], i) =>
     h('button', { type: 'button', cls: i ? '' : 'on', onClick: (e) => { nav.querySelectorAll('button').forEach((b) => b.classList.remove('on')); e.currentTarget.classList.add('on'); $(id).scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, l)));
   $('view-settings').replaceChildren(
@@ -725,11 +957,21 @@ async function paintSettings() {
     h('div', { cls: 'settings-layout' }, nav, h('div', { cls: 'settings-body' },
       card('set-vault', 'Vault',
         h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Vault folder' })),
-          h('div', { cls: 'sp-row' }, vault, pill('pill-ghost', 'Browse', async () => { const p = await VA.pickFolder(); if (p) { vault.value = p; check(true); } })), help)),
+          h('div', { cls: 'sp-row' }, vault, pill('pill-ghost', 'Browse', async () => { const p = await VA.pickFolder(); if (p) { vault.value = p; check(true); } })), help),
+        h('hr', { cls: 'sp-rule' }), layoutHost),
+      card('set-instructions', 'Instructions',
+        h('p', { cls: 'sp-help', text: 'How Rook talks, what it does and how it works is up to you. Rook only fixes what it may change on this PC (see Access).' }),
+        claudeHost, h('hr', { cls: 'sp-rule' }),
+        h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Your instructions' })), instr),
+        h('p', { cls: 'sp-help', text: 'Added to every message, after CLAUDE.md. Use it for things you want on every vault, or to try something before putting it in CLAUDE.md.' })),
       card('set-access', 'Access',
         h('div', { cls: 'sp-line' }, h('span', { text: 'Can read' }), scopeHost), scopeHelp,
         h('div', { cls: 'sp-line' }, h('span', { text: 'Can write' }), h('span', { cls: 'sp-fixed' }, icon('lock', 'sm'), 'Vault only')),
         h('p', { cls: 'sp-help', text: 'This is fixed. Files elsewhere are read-only; a request to change one is written as a new note inside the vault.' }),
+        h('hr', { cls: 'sp-rule' }), limitHost,
+        h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Protected folders and notes' })), protect),
+        h('p', { cls: 'sp-help', text: 'Rook can read these but never change, move or delete them. Paths are inside the vault.' }),
+        h('hr', { cls: 'sp-rule' }),
         h('div', { cls: 'sp-line' }, h('span', { text: 'Web search' }), webHost),
         h('p', { cls: 'sp-help', text: 'Rook can search the web and cites its sources. It cannot open web pages itself; to bring a whole page in, clip it with /clip and its address.' })),
       card('set-assistant', 'Assistant',
@@ -737,7 +979,10 @@ async function paintSettings() {
         h('p', { cls: 'sp-help', text: 'Rook runs Claude Code in WSL. Sign in once with “claude auth login” (or make login).' }),
         h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Your name' })), name)),
       card('set-projects', 'Projects', projHost),
-      card('set-schedule', 'Scheduled notes', schedHost, h('hr', { cls: 'sp-rule' }), promptHost),
+      card('set-schedule', 'Scheduled notes',
+        h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Daily notes go in' })), dailyPat),
+        h('div', { cls: 'sp-field' }, h('span', { cls: 'sp-label' }, h('span', { text: 'Daily note template' })), dailyTpl), dailyHelp,
+        h('hr', { cls: 'sp-rule' }), schedHost, h('hr', { cls: 'sp-rule' }), promptHost),
       card('set-notify', 'Notifications',
         h('div', { cls: 'sp-line' }, h('span', { text: 'Tell me when a reply is ready' }), notifyHost),
         h('p', { cls: 'sp-help', text: 'A Windows notification when Rook finishes a reply while its window is in the tray, minimized or behind other apps. Click it to open Rook.' })),
@@ -807,7 +1052,7 @@ function paintAsk() {
   $('askbar').classList.toggle('busy', S.streaming);
   $('send-slot').replaceChildren(sendBtn($('ask').value || (ATTACH.length ? '.' : ''), () => send($('ask').value)));
   $('ask-files').replaceChildren(...attachNodes());
-  const ctx = S.view === 'notes' && S.pane === 'note' && S.note && S.noteCtx;
+  const ctx = noteShowing() && S.noteCtx;
   const dropLabel = S.noteSel ? 'Ask about the whole note' : 'Ask without this note';
   $('ask-ctx-slot').replaceChildren(...(ctx ? [h('span', { cls: 'ask-ctx' }, icon('file', 'sm'), h('span', { text: `About: ${S.note.title}${S.noteSel ? ' · highlighted text' : ''}` }),
     h('button', { type: 'button', 'aria-label': dropLabel, title: dropLabel, onClick: () => { if (S.noteSel) S.noteSel = ''; else S.noteCtx = false; paintAsk(); } }, icon('x', 'sm')))] : []));
@@ -861,7 +1106,8 @@ function paint() {
 }
 async function loadNotes() {
   try {
-    const [recent, all, info] = await Promise.all([VA.recentNotes(), VA.listNotes(), VA.vaultInfo()]);
+    const [recent, all, info, claudeMd] = await Promise.all([VA.recentNotes(), VA.listNotes(), VA.vaultInfo(), VA.claudeMd.get().catch(() => S.claudeMd)]);
+    S.claudeMd = claudeMd || { exists: false, workflows: [] };
     S.recent = recent; S.all = all; S.names = new Set(all.map((n) => baseName(n.file)));
     if (info.ok) S.noteCount = info.notes;
     const sig = all.length + ':' + all.reduce((a, n) => a + n.mtimeMs, 0);

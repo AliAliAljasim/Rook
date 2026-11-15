@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { tasksIn, setTask, linksIn, isEmptyNote, health, linkNotePath } = require('../src/vaultscan');
+const { tasksIn, setTask, linksIn, isEmptyNote, health, linkNotePath, graph } = require('../src/vaultscan');
 
 const NOTE = ['# Plan', '', '- [ ] Call Sam about [[Proofs]]', '  - [x] Send the file', '1. [ ] Numbered one', '```', '- [ ] not a task, this is code', '```', '- [ ]', '* [X] Done with a capital'].join('\n');
 
@@ -77,4 +77,22 @@ test('a note for a broken link goes where the link says, or beside the note that
   assert.equal(linkNotePath('Projects/Plan.md', 'What? Why: "now"'), 'Projects/What Why now.md');
   assert.equal(linkNotePath('Projects/Plan.md', '../../outside'), null);
   assert.equal(linkNotePath('Projects/Plan.md', '???'), null);
+});
+
+test('graph: notes, attachments and missing notes as kinds, each link once', () => {
+  const g = graph([
+    { rel: 'a.md', text: '[[b]] and [[b|again]] ![[c.png]] [[Nowhere]] [[gone.pdf]] `[[code]]`' },
+    { rel: 'd/b.md', text: '[[a]] [[nowhere]]' },
+    { rel: 'big.md', text: null }], ['img/c.png']);
+  assert.deepEqual(g.nodes.map((n) => [n.id, n.kind]), [['a.md', 'note'], ['d/b.md', 'note'], ['big.md', 'note'], ['img/c.png', 'file'], ['missing:nowhere', 'missing']]);
+  assert.deepEqual(g.edges, [[0, 1], [0, 3], [0, 4], [1, 4]]);
+});
+
+test('workflows: each ### "Trigger" under ## Workflows, with a blank left for the user to fill', () => {
+  const { workflowsIn } = require('../src/vaultscan');
+  const md = '# Me\n## Workflows\nRun these.\n\n### "Start my day" / "Create today\'s note"\n1. Create `01 Daily/x.md` from [[Daily|the template]].\n\n### "What do I think about ___?"\nSearch the vault.\n\n## Tone\n### "Not a workflow"\n';
+  assert.deepEqual(workflowsIn(md), [
+    { label: 'Start my day', prompt: 'Start my day', fill: '', desc: 'Create 01 Daily/x.md from Daily.' },
+    { label: 'What do I think about ___?', prompt: 'What do I think about ___?', fill: 'What do I think about ', desc: 'Search the vault.' }]);
+  assert.deepEqual(workflowsIn('# No workflows here'), []);
 });
