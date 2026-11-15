@@ -89,6 +89,7 @@ async function openNote(nameOrFile) {
     const i = file.lastIndexOf('/');
     S.note = { ...n, title: file.slice(i + 1).replace(/\.md$/i, ''), folder: i < 0 ? '' : file.slice(0, i + 1) };
     S.noteCtx = true; S.noteSel = '';
+    markSeen(file);
     let acc = '';
     for (const part of S.note.folder.split('/').filter(Boolean)) { acc += part + '/'; S.treeOpen.add(acc); }
     // A note opens beside the map (or in the full-width reader, if that is what is showing), and its dot is picked out.
@@ -153,7 +154,7 @@ function chipFor(t) {
   const input = t.input || {};
   const rel = vaultRel(wslToWin(input.file_path || ''));
   if (!rel) return null;
-  const keep = { id: t.id, backup: t.backup || null };
+  const keep = { id: t.id, backup: t.backup || null, at: Date.now() }; // at: so a note opened since then counts as seen
   if (t.name === 'Write') return { verb: t.existed ? 'Edited' : 'Created', path: rel, diff: t.existed ? `${countLines(input.content)} lines` : 'new', ...keep };
   return { verb: 'Edited', path: rel, diff: `+${countLines(input.new_string)} −${countLines(input.old_string)}`, ...keep };
 }
@@ -584,11 +585,27 @@ function rookChanges() {
   for (const c of chats) for (const m of c.msgs) {
     if (m.role !== 'bot') continue;
     for (const b of m.blocks || []) {
-      if (b.t === 'chips') for (const it of b.items) { if (!it.reverted && /\.md$/i.test(it.path)) out.set(it.path.replace(/\\/g, '/'), { verb: it.verb, chat: c }); }
-      if (b.t === 'moves' && !b.undone) for (const mv of b.done || []) if (mv.to) out.set(mv.to, { verb: 'Moved', chat: c });
+      if (b.t === 'chips') for (const it of b.items) { if (!it.reverted && /\.md$/i.test(it.path)) out.set(it.path.replace(/\\/g, '/'), { verb: it.verb, chat: c, at: it.at || c.when }); }
+      if (b.t === 'moves' && !b.undone) for (const mv of b.done || []) if (mv.to) out.set(mv.to, { verb: 'Moved', chat: c, at: b.at || c.when });
     }
   }
+  // A note the user has opened since Rook last changed it is no longer marked; a later change marks it again.
+  const seen = (S.cfg && S.cfg.seen) || {};
+  for (const [file, ch] of out) if (seen[file] >= ch.at) out.delete(file);
   return out;
+}
+// Opening a changed note clears its mark in the list and on the map.
+function markSeen(file) {
+  if (!rookChanges().has(file)) return;
+  const week = Date.now() - 8 * 86400e3; // changes older than a week are not shown anyway, so their records can go
+  const seen = Object.fromEntries(Object.entries(S.cfg.seen || {}).filter(([, t]) => t > week));
+  seen[file] = Date.now();
+  S.cfg = { ...S.cfg, seen };
+  VA.setConfig(S.cfg);
+  if (S.map) S.map.setChanged(changedSet());
+  const n = changedSet().size, legend = document.querySelector('.map-legend');
+  if (legend && !n) legend.remove();
+  else if (legend) legend.lastChild.textContent = `${n} changed by Rook in ${changesFrom()}`;
 }
 const changedSet = () => (mapShow().changes ? rookChanges() : new Map());
 const changesFrom = () => (S.cur && S.cur.msgs.length ? 'this chat' : 'the last 7 days');

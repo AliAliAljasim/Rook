@@ -433,7 +433,7 @@ async function runMoves(bot) {
   if (!moves.length) return;
   let r;
   try { r = await VA.moves.run(moves); } catch { r = { done: [], edited: [], failed: moves.map((m) => ({ ...m, error: 'could not be moved' })) }; }
-  bot.blocks.push({ t: 'moves', done: r.done, failed: r.failed, edited: r.edited, deleted: r.deleted || [], undone: false });
+  bot.blocks.push({ t: 'moves', at: Date.now(), done: r.done, failed: r.failed, edited: r.edited, deleted: r.deleted || [], undone: false });
   if (S.note && (r.deleted || []).some((d) => S.note.file === d.path || S.note.file.startsWith(d.path + '/'))) S.note = null;
   persist(); loadNotes(); scheduleChat();
   if (r.failed.length) toast(`${r.failed.length === 1 ? 'One action' : r.failed.length + ' actions'} could not be done.`, { error: true });

@@ -45,6 +45,7 @@ const DEFAULTS = {
   dailyNote: '',       // where daily notes go, e.g. '01 Daily/{YYYY}/{MM}/{YYYY}-{MM}-{DD}.md'; blank: read off the vault
   dailyTemplate: '',   // the daily note template; blank: Templates/daily.md or similar, when there is one
   hidden: [],          // notes ('a/b.md') and folders ('a/') the user hid from the Notes page and the map
+  seen: {},            // note -> when the user last opened it, which clears Rook's "changed" mark until the next change
   mapShow: { hidden: false, files: false, missing: false, changes: true }, // what the map draws besides visible notes
   model: '',           // '' lets the Claude CLI choose; otherwise one of MODELS
   effort: '',          // '' lets the CLI choose; otherwise one of EFFORTS
