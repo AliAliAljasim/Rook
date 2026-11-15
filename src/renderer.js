@@ -586,9 +586,21 @@ function rookChanges() {
     if (m.role !== 'bot') continue;
     for (const b of m.blocks || []) {
       if (b.t === 'chips') for (const it of b.items) { if (!it.reverted && /\.md$/i.test(it.path)) out.set(it.path.replace(/\\/g, '/'), { verb: it.verb, chat: c, at: it.at || c.when }); }
-      if (b.t === 'moves' && !b.undone) for (const mv of b.done || []) if (mv.to) out.set(mv.to, { verb: 'Moved', chat: c, at: b.at || c.when });
+      if (b.t === 'moves' && !b.undone) {
+        // A moved or deleted note (or folder) takes its earlier changes with it, so the old path is not counted.
+        const under = (file, p) => file === p || file.startsWith(p.replace(/\/$/, '') + '/');
+        for (const d of b.deleted || []) for (const f of [...out.keys()]) if (under(f, d.path)) out.delete(f);
+        for (const mv of b.done || []) {
+          if (!mv.to) continue;
+          for (const f of [...out.keys()]) if (under(f, mv.from)) { const ch = out.get(f); out.delete(f); out.set(mv.to + f.slice(mv.from.length), ch); }
+          if (/\.md$/i.test(mv.to)) out.set(mv.to, { verb: 'Moved', chat: c, at: b.at || c.when });
+        }
+      }
     }
   }
+  // Only notes that are still there and on show: anything else would be counted but could not be found.
+  const there = new Set(S.all.map((n) => n.file)), showHidden = mapShow().hidden;
+  for (const file of [...out.keys()]) if (!there.has(file) || (!showHidden && isHidden(file))) out.delete(file);
   // A note the user has opened since Rook last changed it is no longer marked; a later change marks it again.
   const seen = (S.cfg && S.cfg.seen) || {};
   for (const [file, ch] of out) if (seen[file] >= ch.at) out.delete(file);
